@@ -104,12 +104,34 @@ const allowedOrigins = [
   'http://localhost:3000',
   'http://127.0.0.1:3000',
   'http://172.20.10.4:3000',
+
+  // NETLIFY FRONTEND
+  'https://lucent-syrniki-08c845.netlify.app',
 ];
 
 app.use(
   cors({
-    origin: allowedOrigins,
+    origin: function (origin, callback) {
+      // allow requests with no origin
+      // like mobile apps or postman
+      if (!origin) {
+        return callback(null, true);
+      }
+
+      if (allowedOrigins.includes(origin)) {
+        return callback(null, true);
+      }
+
+      return callback(
+        new Error(
+          `CORS blocked for origin: ${origin}`
+        )
+      );
+    },
+
     credentials: true,
+    methods: ['GET', 'POST', 'PUT', 'DELETE', 'PATCH', 'OPTIONS'],
+    allowedHeaders: ['Content-Type', 'Authorization'],
   })
 );
 
@@ -152,8 +174,11 @@ const server = http.createServer(app);
 const io = new Server(server, {
   cors: {
     origin: allowedOrigins,
+    methods: ['GET', 'POST'],
     credentials: true,
   },
+
+  transports: ['websocket', 'polling'],
 });
 
 /* =========================================
