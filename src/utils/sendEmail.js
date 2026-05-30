@@ -1,62 +1,51 @@
-const nodemailer = require('nodemailer');
+const { Resend } = require('resend');
 
-// Singleton transporter for efficiency
-let transporter = null;
+// Singleton Resend client
+let resendClient = null;
 
-const createTransporter = () => {
-  if (!transporter) {
-    const config = {
-      host: 'smtp.gmail.com',
-      port: 587,
-      secure: false, // Use STARTTLS
-      requireTLS: true,
-      auth: {
-        user: process.env.EMAIL_USER,
-        pass: process.env.EMAIL_PASS,
-      },
-      tls: {
-        // Do not fail on invalid certs
-        rejectUnauthorized: false
-      }
-    };
-
-    transporter = nodemailer.createTransport(config);
-    
-    // Verify connection on creation
-    transporter.verify((error, success) => {
-      if (error) {
-        console.error('✗ SMTP Connection Failed:', error.message);
-      } else {
-        console.log('✓ SMTP Connected and ready to send emails');
-      }
-    });
+const getResendClient = () => {
+  if (!resendClient) {
+    if (!process.env.RESEND_API_KEY) {
+      console.warn('⚠️ RESEND_API_KEY is missing from environment variables');
+    }
+    resendClient = new Resend(process.env.RESEND_API_KEY);
   }
-  return transporter;
+  return resendClient;
 };
 
+/**
+ * Send email using Resend
+ * @param {Object} options - Email options
+ * @param {string} options.email - Recipient email
+ * @param {string} options.subject - Email subject
+ * @param {string} options.message - HTML message content
+ * @returns {Promise<Object>} Resend response
+ */
 const sendEmail = async (options) => {
   console.log('--- EMAIL SEND START ---');
   console.log('To:', options.email);
   console.log('Subject:', options.subject);
 
   try {
-    const mailTransporter = createTransporter();
+    const resend = getResendClient();
 
-    const mailOptions = {
-      from: `"Relaxly" <${process.env.EMAIL_USER}>`,
+    const { data, error } = await resend.emails.send({
+      from: 'Relaxly <onboarding@resend.dev>',
       to: options.email,
       subject: options.subject,
       html: options.message,
-    };
+    });
 
-    const info = await mailTransporter.sendMail(mailOptions);
+    if (error) {
+      throw error;
+    }
+
     console.log('--- EMAIL SEND SUCCESS ---');
-    console.log('Message ID:', info.messageId);
-    return info;
+    console.log('Resend ID:', data.id);
+    return data;
   } catch (error) {
     console.error('--- EMAIL SEND ERROR ---');
-    console.error('Error Message:', error.message);
-    console.error('Error Code:', error.code);
+    console.error('Error Message:', error.message || error);
     throw error;
   }
 };

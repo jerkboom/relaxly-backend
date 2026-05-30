@@ -40,6 +40,7 @@
     "nodemailer": "^8.0.7",
     "pdfkit": "^0.18.0",
     "pm2": "^7.0.1",
+    "resend": "^6.12.4",
     "socket.io": "^4.8.3",
     "socket.io-client": "^4.8.3",
     "validator": "^13.15.35",
