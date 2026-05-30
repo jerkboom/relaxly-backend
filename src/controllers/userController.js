@@ -4,14 +4,15 @@ const asyncHandler =
 const User =
   require('../models/User');
 
+const inviteCodeService = require('../services/inviteCodeService');
+const { sendSuccess } = require('../utils/responseHandler');
+
 // GET PROFILE
 const getProfile =
   asyncHandler(
     async (req, res) => {
       const user =
-        await User.findById(
-          req.user.id
-        ).populate(
+        await User.findById(req.user._id).populate(
           'university',
           'name'
         );
@@ -24,7 +25,7 @@ const getProfile =
         );
       }
 
-      res.status(200).json(user);
+      sendSuccess(res, user, 'Profile fetched successfully');
     }
   );
 
@@ -33,9 +34,7 @@ const updateProfile =
   asyncHandler(
     async (req, res) => {
       const user =
-        await User.findById(
-          req.user.id
-        );
+        await User.findById(req.user._id);
 
       if (!user) {
         res.status(404);
@@ -65,17 +64,41 @@ const updateProfile =
         req.body.profileImage ||
         user.profileImage;
 
+      // Update new fields
+      if (user.role === 'student') {
+        user.schoolName = req.body.schoolName || user.schoolName;
+        user.studentId = req.body.studentId || user.studentId;
+      }
+
+      if (user.role === 'owner') {
+        user.governmentIdUrl = req.body.governmentIdUrl || user.governmentIdUrl;
+        // user.ownerAccessCode = req.body.ownerAccessCode || user.ownerAccessCode; // Moved to verifyInviteCode
+      }
+
       const updatedUser =
         await user.save();
 
-      res.status(200).json({
-        message:
-          'Profile updated successfully',
-
-        user: updatedUser,
-      });
+      sendSuccess(res, updatedUser, 'Profile updated successfully');
     }
   );
+
+// VERIFY INVITE CODE
+const verifyInviteCode = asyncHandler(async (req, res) => {
+  const { code } = req.body;
+  if (!code) {
+    res.status(400);
+    throw new Error('Please provide an invite code');
+  }
+
+  const user = await User.findById(req.user._id);
+  if (!user || user.role !== 'owner') {
+    res.status(403);
+    throw new Error('Only owners can verify invite codes');
+  }
+
+  await inviteCodeService.validateAndUseCode(code, user);
+  sendSuccess(res, { isOwnerVerified: true }, 'Invite code verified successfully. Your dashboard is now unlocked.');
+});
 
 const getUserById = asyncHandler(async (req, res) => {
   const user = await User.findById(req.params.id).select(
@@ -87,11 +110,14 @@ const getUserById = asyncHandler(async (req, res) => {
     throw new Error('User not found');
   }
 
-  res.status(200).json(user);
+  sendSuccess(res, user, 'Profile fetched successfully');
 });
 
 module.exports = {
   getUserById,
   getProfile,
   updateProfile,
+  verifyInviteCode,
 };
+
+

@@ -1,11 +1,12 @@
+process.env.UV_THREADPOOL_SIZE = 64;
 const express = require('express');
+const mongoose = require('mongoose');
 const cors = require('cors');
 const http = require('http');
 const { Server } = require('socket.io');
 const helmet = require('helmet');
 const mongoSanitize = require('express-mongo-sanitize');
 const rateLimit = require('express-rate-limit');
-const jwt = require('jsonwebtoken');
 const morgan = require('morgan');
 
 require('dotenv').config();
@@ -16,9 +17,10 @@ require('dotenv').config();
 const connectDB = require('./src/config/db');
 
 /* =========================================
-   MODELS
+   SOCKET MANAGER
 ========================================= */
-const User = require('./src/models/User');
+const socketManager = require('./src/utils/socketManager');
+const { initIO } = require('./src/socket');
 
 /* =========================================
    ROUTES
@@ -37,14 +39,19 @@ const analyticsRoutes = require('./src/routes/analyticsRoutes');
 const notificationRoutes = require('./src/routes/notificationRoutes');
 const paymentRoutes = require('./src/routes/paymentRoutes');
 const receiptRoutes = require('./src/routes/receiptRoutes');
+const communicationRoutes = require('./src/routes/communicationRoutes');
+const messageRoutes = require('./src/routes/messageRoutes');
+const adminRoutes = require('./src/routes/adminRoutes');
+const financeRoutes = require('./src/routes/financeRoutes');
+const payoutMethodRoutes = require('./src/routes/payoutMethodRoutes');
+const ownerOperationsRoutes = require('./src/routes/ownerOperationsRoutes');
+const payoutRoutes = require('./src/routes/payoutRoutes');
 
 /* =========================================
    MIDDLEWARE
 ========================================= */
-const {
-  notFound,
-  errorHandler,
-} = require('./src/middleware/errorMiddleware');
+const path = require('path');
+const analyticsTracker = require('./src/middleware/analyticsTracker');
 
 const app = express();
 
@@ -52,6 +59,20 @@ const app = express();
    CONNECT DATABASE
 ========================================= */
 connectDB();
+
+const systemMonitor = require('./src/utils/systemMonitor');
+
+/* =========================================
+   LATENCY TRACKER
+========================================= */
+app.use((req, res, next) => {
+  const start = process.hrTime ? process.hrTime() : Date.now();
+  res.on('finish', () => {
+    const duration = process.hrTime ? process.hrTime(start)[1] / 1000000 : Date.now() - start;
+    systemMonitor.recordLatency(duration);
+  });
+  next();
+});
 
 /* =========================================
    PAYSTACK WEBHOOK
@@ -66,18 +87,13 @@ app.use(
 /* =========================================
    BODY PARSERS
 ========================================= */
-app.use(
-  express.json({
-    limit: '100kb',
-  })
-);
+app.use(express.json({ limit: '100kb' }));
+app.use(express.urlencoded({ extended: true, limit: '100kb' }));
 
-app.use(
-  express.urlencoded({
-    extended: true,
-    limit: '100kb',
-  })
-);
+/* =========================================
+   ANALYTICS TRACKER
+========================================= */
+app.use('/api', analyticsTracker);
 
 /* =========================================
    EXPRESS 5 QUERY FIX
@@ -85,7 +101,6 @@ app.use(
 app.use((req, res, next) => {
   if (req.query) {
     const query = req.query;
-
     Object.defineProperty(req, 'query', {
       value: query,
       writable: true,
@@ -93,7 +108,6 @@ app.use((req, res, next) => {
       configurable: true,
     });
   }
-
   next();
 });
 
@@ -102,301 +116,156 @@ app.use((req, res, next) => {
 ========================================= */
 const allowedOrigins = [
   'http://localhost:3000',
+  'http://localhost:3001',
   'http://127.0.0.1:3000',
+  'http://127.0.0.1:3001',
   'http://172.20.10.4:3000',
-
-  // NETLIFY FRONTEND
   'https://lucent-syrniki-08c845.netlify.app',
 ];
 
 app.use(
   cors({
-    origin: function (origin, callback) {
-      // allow requests with no origin
-      // like mobile apps or postman
-      if (!origin) {
-        return callback(null, true);
-      }
-
-      if (allowedOrigins.includes(origin)) {
-        return callback(null, true);
-      }
-
-      return callback(
-        new Error(
-          `CORS blocked for origin: ${origin}`
-        )
-      );
-    },
-
-    credentials: true,
-    methods: ['GET', 'POST', 'PUT', 'DELETE', 'PATCH', 'OPTIONS'],
-    allowedHeaders: ['Content-Type', 'Authorization'],
+    origin: true,
+    credentials: false,
   })
 );
+app.options('/{*splat}', cors());
 
 /* =========================================
    SECURITY
 ========================================= */
-app.use(
-  helmet({
-    crossOriginResourcePolicy: false,
-  })
-);
+const { globalLimiter, bookingLimiter, adminLimiter } = require('./src/middleware/rateLimiter');
 
+app.use(helmet({ crossOriginResourcePolicy: false }));
 app.use(mongoSanitize());
+app.use('/api', globalLimiter);
+app.use('/api/admin', adminLimiter);
+app.use('/api/bookings', bookingLimiter);
 
 /* =========================================
    LOGGER
 ========================================= */
 app.use(morgan('dev'));
 
-/* =========================================
-   RATE LIMITER
-========================================= */
-const limiter = rateLimit({
-  windowMs: 15 * 60 * 1000,
-  max: 100,
-  message:
-    'Too many requests from this IP. Please try again later.',
+// Specific stricter limit for admin login
+const adminLoginLimiter = rateLimit({
+  windowMs: 15 * 60 * 1000, // 15 minutes
+  max: 10, // Limit each IP to 10 login requests per `window`
+  message: 'Too many login attempts from this IP, please try again after 15 minutes',
 });
+app.use('/api/auth/login', adminLoginLimiter);
 
-app.use(limiter);
+// Relaxed limit for notifications to prevent 429 during normal polling
+const notificationLimiter = rateLimit({
+  windowMs: 15 * 60 * 1000,
+  max: 500,
+  message: 'Too many notification requests. Please try again later.',
+});
+app.use('/api/notifications', notificationLimiter);
+
 
 /* =========================================
-   HTTP SERVER
+   HTTP SERVER & SOCKET.IO
 ========================================= */
 const server = http.createServer(app);
-
-/* =========================================
-   SOCKET.IO
-========================================= */
-const io = new Server(server, {
-  cors: {
-    origin: allowedOrigins,
-    methods: ['GET', 'POST'],
-    credentials: true,
-  },
-
-  transports: ['websocket', 'polling'],
-});
-
-/* =========================================
-   ATTACH SOCKET TO APP
-========================================= */
+const io = initIO(server);
 app.set('io', io);
 
 /* =========================================
-   ONLINE USERS TRACKER
-========================================= */
-const onlineUsers = new Map();
-
-const getOnlineUserIds = () =>
-  Array.from(onlineUsers.keys());
-
-const addOnlineSocket = (
-  userId,
-  socketId
-) => {
-  const sockets =
-    onlineUsers.get(userId) || new Set();
-
-  sockets.add(socketId);
-
-  onlineUsers.set(userId, sockets);
-};
-
-const removeOnlineSocket = (
-  userId,
-  socketId
-) => {
-  const sockets =
-    onlineUsers.get(userId);
-
-  if (!sockets) return;
-
-  sockets.delete(socketId);
-
-  if (sockets.size === 0) {
-    onlineUsers.delete(userId);
-  }
-};
-
-/* =========================================
-   ROOT TEST ROUTE
+   ROOT & HEALTH ROUTES
 ========================================= */
 app.get('/', (req, res) => {
   res.status(200).json({
     success: true,
-    message:
-      'Hostel Booking API Running Successfully',
+    message: 'Hostel Booking API Running Successfully',
   });
+});
+
+app.get('/api/health', async (req, res) => {
+  // Check database connection state
+  // 0 = disconnected, 1 = connected, 2 = connecting, 3 = disconnecting
+  const dbState = mongoose.connection.readyState;
+  const isHealthy = dbState === 1;
+
+  if (isHealthy) {
+    return res.status(200).json({
+      status: 'OK',
+      database: 'Connected',
+      uptime: process.uptime(),
+      timestamp: new Date().toISOString()
+    });
+  } else {
+    // If the DB is down, return a 503 Service Unavailable
+    return res.status(503).json({
+      status: 'DEGRADED',
+      database: 'Disconnected',
+      timestamp: new Date().toISOString()
+    });
+  }
 });
 
 /* =========================================
    API ROUTES
 ========================================= */
 app.use('/api/auth', authRoutes);
-
+app.use('/auth', authRoutes); 
+app.use('/api/admin/owners', ownerOperationsRoutes); 
+app.use('/api/admin', adminRoutes);
 app.use('/api/users', userRoutes);
-
-app.use(
-  '/api/universities',
-  universityRoutes
-);
-
+app.use('/users', userRoutes); // Handle frontend calling without /api prefix
+app.use('/api/universities', universityRoutes);
+app.use('/universities', universityRoutes);
 app.use('/api/hostels', hostelRoutes);
-
+app.use('/hostels', hostelRoutes); 
 app.use('/api/rooms', roomRoutes);
-
+app.use('/rooms', roomRoutes);
 app.use('/api/bookings', bookingRoutes);
-
-app.use(
-  '/api/dashboard',
-  dashboardRoutes
-);
-
+app.use('/bookings', bookingRoutes);
+app.use('/api/payout-method', payoutMethodRoutes);
+app.use('/payout-method', payoutMethodRoutes); // Handle frontend calling without /api prefix
+app.use('/api/dashboard', dashboardRoutes);
+app.use('/dashboard', dashboardRoutes);
 app.use('/api/upload', uploadRoutes);
-
 app.use('/api/reviews', reviewRoutes);
-
-app.use(
-  '/api/favorites',
-  favoriteRoutes
-);
-
-app.use(
-  '/api/analytics',
-  analyticsRoutes
-);
-
-app.use(
-  '/api/notifications',
-  notificationRoutes
-);
-
+app.use('/reviews', reviewRoutes);
+app.use('/api/favorites', favoriteRoutes);
+app.use('/favorites', favoriteRoutes);
+app.use('/api/analytics', analyticsRoutes);
+app.use('/api/notifications', notificationRoutes);
+app.use('/notifications', notificationRoutes); 
+app.use('/api/communication', communicationRoutes);
+app.use('/api/messages', messageRoutes);
+app.use('/messages', messageRoutes);
 app.use('/api/payments', paymentRoutes);
-
+app.use('/payments', paymentRoutes);
 app.use('/api/receipts', receiptRoutes);
+app.use('/api/finance', financeRoutes);
+app.use('/api/payouts', payoutRoutes);
+app.use('/payouts', payoutRoutes); // Handle frontend calling without /api prefix
 
 /* =========================================
-   SOCKET AUTHENTICATION
+   ERROR HANDLING (Must be at the very end!)
 ========================================= */
-io.use(async (socket, next) => {
-  try {
-    const token =
-      socket.handshake.auth?.token;
+const { errorHandler, notFoundHandler } = require('./src/middleware/errorHandler');
 
-    if (!token) {
-      return next(
-        new Error('Authentication error')
-      );
-    }
+// 1. Catch 404s (Route doesn't exist)
+app.use(notFoundHandler);
 
-    const decoded = jwt.verify(
-      token,
-      process.env.JWT_SECRET
-    );
-
-    const user = await User.findById(
-      decoded.id
-    ).select('_id role');
-
-    if (!user) {
-      return next(
-        new Error('Authentication error')
-      );
-    }
-
-    socket.user = {
-      id: user._id.toString(),
-      role: user.role,
-    };
-
-    next();
-  } catch (error) {
-    console.error(
-      'Socket authentication failed:',
-      error.message
-    );
-
-    next(
-      new Error('Authentication error')
-    );
-  }
-});
-
-/* =========================================
-   SOCKET CONNECTION
-========================================= */
-io.on('connection', (socket) => {
-  const userId = socket.user.id;
-
-  console.log(
-    `Socket connected: ${socket.id}`
-  );
-
-  console.log(
-    `Authenticated user: ${userId}`
-  );
-
-  /* USER ROOM */
-  socket.join(userId);
-
-  /* TRACK ONLINE USER */
-  addOnlineSocket(userId, socket.id);
-
-  /* BROADCAST ONLINE USERS */
-  io.emit(
-    'onlineUsers',
-    getOnlineUserIds()
-  );
-
-  /* =========================================
-     DISCONNECT
-  ========================================= */
-  socket.on('disconnect', () => {
-    removeOnlineSocket(
-      userId,
-      socket.id
-    );
-
-    io.emit(
-      'onlineUsers',
-      getOnlineUserIds()
-    );
-
-    console.log(
-      `Socket disconnected: ${socket.id}`
-    );
-  });
-});
-
-/* =========================================
-   404 HANDLER
-========================================= */
-app.use(notFound);
-
-/* =========================================
-   GLOBAL ERROR HANDLER
-========================================= */
+// 2. The Global Error Handler Net
 app.use(errorHandler);
-
-/* =========================================
-   PORT
-========================================= */
-const PORT =
-  process.env.PORT || 5000;
 
 /* =========================================
    START SERVER
 ========================================= */
-server.listen(
-  PORT,
-  '0.0.0.0',
-  () => {
-    console.log(
-      `Server running on port ${PORT}`
-    );
-  }
-);
+const { startPayoutWorker } = require('./src/workers/payoutWorker');
+const { startReservationExpiryWorker } = require('./src/workers/reservationExpiryWorker');
+const { startCommunicationWorker } = require('./src/workers/communicationWorker');
+
+const PORT = process.env.PORT || 5000;
+server.listen(PORT, '0.0.0.0', () => {
+    console.log(`Server running in ${process.env.NODE_ENV || 'development'} mode on port ${PORT}`);
+    startPayoutWorker();
+    startReservationExpiryWorker();
+    startCommunicationWorker();
+});
+

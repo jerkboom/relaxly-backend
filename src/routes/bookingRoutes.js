@@ -1,5 +1,4 @@
 const express = require('express');
-
 const router = express.Router();
 
 const {
@@ -10,32 +9,38 @@ const {
   getOwnerBookings,
   cancelBooking,
   updateBookingStatus,
-} = require(
-  '../controllers/bookingController'
-);
+  checkInStudent,
+} = require('../controllers/bookingController');
 
 const {
   protect,
   authorizeRoles,
-} = require(
-  '../middleware/authMiddleware'
-);
+} = require('../middleware/authMiddleware');
+
+const {
+  isEmailVerified,
+} = require('../middleware/verificationMiddleware');
+
+const { validateObjectIds } = require('../middleware/validationMiddleware');
+
+const checkMaintenanceMode = require('../middleware/maintenanceMiddleware');
 
 /* ========================================
    CREATE BOOKING
 ======================================== */
-
 router.post(
   '/',
   protect,
+  checkMaintenanceMode,
   authorizeRoles('student'),
+  isEmailVerified,
+  validateObjectIds(['room', 'hostel'], 'body'),
   createBooking
 );
 
 /* ========================================
    GET STUDENT BOOKINGS
 ======================================== */
-
 router.get(
   '/my-bookings',
   protect,
@@ -46,7 +51,6 @@ router.get(
 /* ========================================
    GET OWNER BOOKINGS
 ======================================== */
-
 router.get(
   '/owner',
   protect,
@@ -56,20 +60,17 @@ router.get(
 
 /* ========================================
    GET SINGLE BOOKING / RECEIPT
-   IMPORTANT FOR:
-   /payments/receipt/[id]
 ======================================== */
-
 router.get(
   '/:id',
   protect,
+  validateObjectIds(['id']),
   getBookingById
 );
 
 /* ========================================
    GET ALL BOOKINGS
 ======================================== */
-
 router.get(
   '/',
   protect,
@@ -79,26 +80,27 @@ router.get(
 /* ========================================
    UPDATE BOOKING STATUS
 ======================================== */
-
 router.put(
   '/:id/status',
   protect,
-  authorizeRoles(
-    'owner',
-    'admin'
-  ),
+  authorizeRoles('owner', 'admin'),
+  validateObjectIds(['id']),
   updateBookingStatus
 );
 
 /* ========================================
    CANCEL BOOKING
 ======================================== */
-
 router.put(
   '/:id/cancel',
   protect,
+  checkMaintenanceMode,
   authorizeRoles('student'),
+  validateObjectIds(['id']),
   cancelBooking
 );
 
+router.patch('/:id/check-in', protect, authorizeRoles('owner', 'admin'), validateObjectIds(['id']), checkInStudent);
+
 module.exports = router;
+

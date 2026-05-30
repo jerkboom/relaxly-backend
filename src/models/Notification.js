@@ -30,6 +30,7 @@ const notificationSchema = new mongoose.Schema(
         'payment',
         'account',
         'admin',
+        'finance',
       ],
       default: 'system',
       index: true,

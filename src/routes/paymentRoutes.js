@@ -1,25 +1,26 @@
 const express = require('express');
-
 const router = express.Router();
 
 const {
   initializePayment,
   verifyPayment,
   paystackWebhook,
-} = require(
-  '../controllers/paymentController'
-);
+} = require('../controllers/paymentController');
 
 const {
   protect,
   authorizeRoles,
-} = require(
-  '../middleware/authMiddleware'
-);
+} = require('../middleware/authMiddleware');
+
+const {
+  isEmailVerified,
+} = require('../middleware/verificationMiddleware');
+
+const { validateObjectIds } = require('../middleware/validationMiddleware');
+
+const checkMaintenanceMode = require('../middleware/maintenanceMiddleware');
 
 // PAYSTACK WEBHOOK
-// IMPORTANT:
-// Must come BEFORE protected routes
 router.post(
   '/webhook',
   paystackWebhook
@@ -29,7 +30,10 @@ router.post(
 router.post(
   '/initialize',
   protect,
+  checkMaintenanceMode,
   authorizeRoles('student'),
+  isEmailVerified,
+  validateObjectIds(['bookingId', 'booking_id', 'id', '_id'], 'body'),
   initializePayment
 );
 
@@ -37,10 +41,8 @@ router.post(
 router.get(
   '/verify/:reference',
   protect,
-  authorizeRoles(
-    'student',
-    'admin'
-  ),
+  authorizeRoles('student', 'admin'),
+  isEmailVerified,
   verifyPayment
 );
 

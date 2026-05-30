@@ -1,5 +1,4 @@
 const express = require('express');
-
 const router = express.Router();
 
 const {
@@ -16,6 +15,12 @@ const {
   protect,
   authorizeRoles,
 } = require('../middleware/authMiddleware');
+
+const {
+  isOwnerApproved,
+} = require('../middleware/verificationMiddleware');
+
+const checkMaintenanceMode = require('../middleware/maintenanceMiddleware');
 
 /*
 |--------------------------------------------------------------------------
@@ -35,7 +40,9 @@ router.get(
 router.post(
   '/',
   protect,
+  checkMaintenanceMode,
   authorizeRoles('owner'),
+  isOwnerApproved,
   createHostel
 );
 
@@ -67,6 +74,7 @@ router.get(
 router.put(
   '/:id',
   protect,
+  checkMaintenanceMode,
   authorizeRoles('owner'),
   updateHostel
 );
@@ -75,6 +83,7 @@ router.put(
 router.delete(
   '/:id',
   protect,
+  checkMaintenanceMode,
   authorizeRoles('owner'),
   deleteHostel
 );

@@ -32,4 +32,6 @@ const reviewSchema = new mongoose.Schema(
   }
 );
 
+reviewSchema.index({ hostel: 1 });
+
 module.exports = mongoose.model('Review', reviewSchema);

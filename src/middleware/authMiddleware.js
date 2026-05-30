@@ -4,6 +4,16 @@ const jwt =
 const User =
   require('../models/User');
 
+const Admin =
+  require('../models/Admin');
+
+const normalizeRole = (role) => {
+  if (!role) return 'student';
+  const r = String(role).toLowerCase();
+  if (r === 'admin') return 'super_admin';
+  return r;
+};
+
 // PROTECT ROUTES
 const protect = async (
   req,
@@ -31,24 +41,37 @@ const protect = async (
           process.env.JWT_SECRET
         );
 
-      // GET FULL USER FROM DATABASE
-      req.user =
-        await User.findById(
-          decoded.id
-        ).select(
-          '-password'
-        );
+      // GET FULL AUTHENTICATED ACCOUNT FROM DATABASE
+      if (decoded.authType === 'admin') {
+        req.user = await Admin.findById(decoded.id).select('-password');
+        req.admin = req.user;
+      } else {
+        // FETCH FRESH USER STATE FROM DB
+        req.user = await User.findById(decoded.id).select('-password');
+
+        // Backward-compatible fallback for admin tokens issued before authType existed.
+        if (!req.user) {
+          req.user = await Admin.findById(decoded.id).select('-password');
+          req.admin = req.user;
+        }
+      }
 
       if (!req.user) {
         return res.status(401).json({
+          success: false,
           message:
-            'Not authorized, user no longer exists',
+            'Not authorized, account no longer exists',
         });
+      }
+
+      if (!req.user.accountStatus && req.user.status) {
+        req.user.accountStatus = req.user.status;
       }
 
       next();
     } catch (error) {
       return res.status(401).json({
+        success: false,
         message:
           'Not authorized, token failed',
       });
@@ -57,6 +80,7 @@ const protect = async (
 
   if (!token) {
     return res.status(401).json({
+      success: false,
       message:
         'Not authorized, no token',
     });
@@ -66,18 +90,20 @@ const protect = async (
 // ROLE AUTHORIZATION
 const authorizeRoles =
   (...roles) => {
+    const authorizedRoles = roles.map(r => String(r).toLowerCase());
     return (
       req,
       res,
       next
     ) => {
+      const userRole = (req.user.role || 'student').toLowerCase();
       if (
-        !roles.includes(
-          req.user.role
-        )
+        !authorizedRoles.includes(userRole) &&
+        !authorizedRoles.includes(normalizeRole(userRole))
       ) {
         return res.status(403).json(
           {
+            success: false,
             message: `Role (${req.user.role}) is not allowed`,
           }
         );

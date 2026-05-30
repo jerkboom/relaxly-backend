@@ -1,4 +1,5 @@
 const mongoose = require('mongoose');
+const PlatformSettings = require('./PlatformSettings');
 
 const roomSchema = new mongoose.Schema(
   {
@@ -15,13 +16,26 @@ const roomSchema = new mongoose.Schema(
 
     occupancyStyle: {
       type: String,
-      enum: ['1-in-1', '2-in-1', '3-in-1', '4-in-1'],
+      enum: ['1-in-1', '2-in-1', '3-in-1', '4-in-1', '5-in-1', '6-in-1', '7-in-1', '8-in-1'],
       required: true,
     },
 
     price: {
       type: Number,
       required: true,
+    },
+
+    basePrice: {
+      type: Number,
+    },
+
+    platformAdjustment: {
+      type: Number,
+      default: 0,
+    },
+
+    displayPrice: {
+      type: Number,
     },
 
     billingPeriod: {
@@ -103,8 +117,32 @@ const roomSchema = new mongoose.Schema(
   }
 );
 
+roomSchema.index({ hostel: 1 });
+roomSchema.index({ hostel: 1, availableBeds: 1, roomStatus: 1 });
+roomSchema.index({ hostel: 1, genderAllocation: 1, roomStatus: 1, availableBeds: 1 });
+
 // SYNC AVAILABLE BEDS AND VALIDATE CAPACITY
-roomSchema.pre('save', function () {
+roomSchema.pre('save', async function () {
+  // 1. CALCULATE PRICING ADJUSTMENTS
+  // Owners enter 'price' which we treat as 'basePrice'
+  if (this.isModified('price') || this.isNew) {
+    this.basePrice = this.price;
+  }
+
+  // Fetch global adjustments
+  const settings = await PlatformSettings.getSettings();
+  const adjustment = settings.roomTypeAdjustments?.[this.occupancyStyle] || 0;
+  
+  this.platformAdjustment = adjustment;
+  this.displayPrice = (this.basePrice || this.price) + adjustment;
+  
+  // Ensure the main 'price' field reflects the student's cost (displayPrice)
+  // but only if we have a basePrice to work from
+  if (this.basePrice !== undefined) {
+    this.price = this.displayPrice;
+  }
+
+  // 2. AVAILABILITY SYNC
   // Male-only rooms
   if (this.genderAllocation === 'Male') {
     this.femaleAvailableBeds = 0;
@@ -142,6 +180,14 @@ roomSchema.pre('save', function () {
     this.roomStatus = 'unavailable';
   } else if (this.roomStatus === 'unavailable') {
     this.roomStatus = 'available';
+  }
+
+  // REFERENTIAL INTEGRITY VALIDATION
+  if (this.isModified('hostel') || this.isNew) {
+    const hostelExists = await mongoose.model('Hostel').exists({ _id: this.hostel });
+    if (!hostelExists) {
+      throw new Error(`Referential Integrity Error: Hostel with ID ${this.hostel} does not exist.`);
+    }
   }
 });
 

@@ -1,12 +1,14 @@
 const express = require('express');
 
 const router = express.Router();
+const { getPublicSettings } = require('../controllers/adminController');
+router.get('/settings/public', getPublicSettings);
 
 const {
   body,
 } = require('express-validator');
 
-const validate = require(
+const { validate } = require(
   '../middleware/validationMiddleware'
 );
 
@@ -17,6 +19,7 @@ const {
   forgotPassword,
   resetPassword,
   verifyEmail,
+  resendVerificationEmail,
 } = require('../controllers/authController');
 
 const {
@@ -45,11 +48,13 @@ router.post(
 
     body('role')
       .optional()
-      .isIn([
-        'student',
-        'owner',
-      ])
-      .withMessage('Invalid role'),
+      .custom((value) => {
+        const normalized = String(value).toLowerCase();
+        if (!['student', 'owner'].includes(normalized)) {
+          throw new Error('Invalid role. Must be student or owner.');
+        }
+        return true;
+      }),
   ],
 
   validate,
@@ -122,6 +127,12 @@ router.put(
 router.get(
   '/verify-email/:token',
   verifyEmail
+);
+
+// RESEND VERIFICATION
+router.post(
+  '/resend-verification',
+  resendVerificationEmail
 );
 
 module.exports = router;

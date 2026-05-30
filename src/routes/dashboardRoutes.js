@@ -1,4 +1,4 @@
-const express =
+﻿const express =
   require('express');
 
 const router =
@@ -18,6 +18,10 @@ const {
   '../middleware/authMiddleware'
 );
 
+const {
+  isOwnerApproved,
+} = require('../middleware/verificationMiddleware');
+
 router.get(
   '/student',
   protect,
@@ -29,6 +33,7 @@ router.get(
   '/owner',
   protect,
   authorizeRoles('owner'),
+  isOwnerApproved,
   getOwnerDashboard
 );
 

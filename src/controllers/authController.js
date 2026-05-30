@@ -78,7 +78,7 @@ const registerUser = asyncHandler(
         name: user.name,
         email: user.email,
         role: user.role,
-        isVerified: user.isVerified,
+        isEmailVerified: user.isEmailVerified,
       },
     });
 
@@ -89,7 +89,7 @@ const registerUser = asyncHandler(
       `${process.env.FRONTEND_URL}/verify-email/${verificationToken}`;
 
     const message = `
-      <p>Welcome to HostelHub.</p>
+      <p>Welcome to Relaxly.</p>
       <p>Click the link below to verify your email address:</p>
       <p><a href="${verificationUrl}">${verificationUrl}</a></p>
       <p>This link expires in 24 hours.</p>
@@ -100,7 +100,7 @@ const registerUser = asyncHandler(
       try {
         await sendEmail({
           email: user.email,
-          subject: 'Verify your HostelHub email',
+          subject: 'Verify your Relaxly email',
           message,
         });
 
@@ -146,13 +146,13 @@ const loginUser = asyncHandler(
     }
 
     // CHECK IF VERIFIED
-    //if (!user.isVerified) {
-      //res.status(401);
+    if (!user.isEmailVerified) {
+      res.status(401);
 
-      //throw new Error(
-        //'Please verify your email first'
-    //  );
-   // }
+      throw new Error(
+        'Please verify your email first'
+      );
+    }
 
     // Compare password
     const isMatch =
@@ -253,7 +253,7 @@ const forgotPassword = asyncHandler(
       `${process.env.FRONTEND_URL}/reset-password/${resetToken}`;
 
     const message = `
-      <p>You requested a password reset for your HostelHub account.</p>
+      <p>You requested a password reset for your Relaxly account.</p>
       <p>Click the link below to reset your password:</p>
       <p><a href="${resetUrl}">${resetUrl}</a></p>
       <p>This link expires in 10 minutes.</p>
@@ -264,7 +264,7 @@ const forgotPassword = asyncHandler(
       await sendEmail({
         email: user.email,
         subject:
-          'HostelHub Password Reset',
+          'Relaxly Password Reset',
         message,
       });
 
@@ -385,7 +385,7 @@ const verifyEmail = asyncHandler(
     }
 
     // Verify user
-    user.isVerified = true;
+    user.isEmailVerified = true;
 
     // Clear verification fields
     user.emailVerificationToken =
@@ -400,7 +400,7 @@ const verifyEmail = asyncHandler(
       user: user._id,
       title: 'Account verified',
       message:
-        'Your HostelHub account has been verified successfully.',
+        'Your Relaxly account has been verified successfully.',
       type: 'account',
     });
 
@@ -411,7 +411,38 @@ const verifyEmail = asyncHandler(
   }
 );
 
+
+// RESEND VERIFICATION EMAIL
+const resendVerificationEmail = asyncHandler(async (req, res) => {
+  const { email } = req.body;
+  const user = await User.findOne({ email });
+  if (!user) {
+    res.status(404);
+    throw new Error('User not found');
+  }
+  if (user.isEmailVerified) {
+    res.status(400);
+    throw new Error('Email is already verified');
+  }
+  const verificationToken = user.generateEmailVerificationToken();
+  await user.save();
+  
+  const verificationUrl = `${process.env.FRONTEND_URL || 'http://localhost:3000'}/verify-email/${verificationToken}`;
+  
+  await sendEmail({
+    email: user.email,
+    subject: 'Verify your Relaxly email',
+    message: `Please verify your email: ${verificationUrl}`
+  });
+
+  res.status(200).json({
+    success: true,
+    message: 'Verification email resent successfully'
+  });
+});
+
 module.exports = {
+  resendVerificationEmail,
   registerUser,
   loginUser,
   getMe,

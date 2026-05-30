@@ -1,8 +1,5 @@
-const express =
-  require('express');
-
-const router =
-  express.Router();
+const express = require('express');
+const router = express.Router();
 
 const {
   createRoom,
@@ -10,36 +7,27 @@ const {
   getSingleRoom,
   updateRoom,
   deleteRoom,
-} = require(
-  '../controllers/roomController'
-);
+} = require('../controllers/roomController');
 
 const {
   protect,
   authorizeRoles,
-} = require(
-  '../middleware/authMiddleware'
-);
+} = require('../middleware/authMiddleware');
+
+const checkMaintenanceMode = require('../middleware/maintenanceMiddleware');
 
 // GET ALL ROOMS
-router.get(
-  '/',
-  getRooms
-);
+router.get('/', getRooms);
 
 // GET SINGLE ROOM
-router.get(
-  '/:id',
-  getSingleRoom
-);
+router.get('/:id', getSingleRoom);
 
 // CREATE ROOM
 router.post(
   '/',
   protect,
-  authorizeRoles(
-    'owner'
-  ),
+  checkMaintenanceMode,
+  authorizeRoles('owner'),
   createRoom
 );
 
@@ -47,9 +35,8 @@ router.post(
 router.put(
   '/:id',
   protect,
-  authorizeRoles(
-    'owner'
-  ),
+  checkMaintenanceMode,
+  authorizeRoles('owner'),
   updateRoom
 );
 
@@ -57,9 +44,8 @@ router.put(
 router.delete(
   '/:id',
   protect,
-  authorizeRoles(
-    'owner'
-  ),
+  checkMaintenanceMode,
+  authorizeRoles('owner'),
   deleteRoom
 );
 

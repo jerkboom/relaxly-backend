@@ -91,10 +91,55 @@ const hostelSchema = new mongoose.Schema(
       type: Boolean,
       default: true,
     },
+
+    // MODERATION FIELDS
+    verificationStatus: {
+      type: String,
+      enum: ['pending', 'approved', 'rejected', 'SUSPENDED'],
+      default: 'pending',
+      index: true,
+    },
+
+    isVerified: {
+      type: Boolean,
+      default: false,
+      index: true,
+    },
+
+    approvedBy: {
+      type: mongoose.Schema.Types.ObjectId,
+      ref: 'User',
+    },
+
+    approvedAt: {
+      type: Date,
+    },
+
+    rejectionReason: {
+      type: String,
+    },
+
+    suspensionReason: {
+      type: String,
+    },
   },
   {
     timestamps: true,
   }
 );
+
+// INDEXES FOR SEARCH & MODERATION
+hostelSchema.index({ verificationStatus: 1, available: 1 });
+hostelSchema.index({ owner: 1, verificationStatus: 1 });
+
+// REFERENTIAL INTEGRITY VALIDATION
+hostelSchema.pre('save', async function() {
+  if (this.isModified('owner') || this.isNew) {
+    const ownerExists = await mongoose.model('User').exists({ _id: this.owner });
+    if (!ownerExists) {
+      throw new Error(`Referential Integrity Error: Owner with ID ${this.owner} does not exist.`);
+    }
+  }
+});
 
 module.exports = mongoose.model('Hostel', hostelSchema);

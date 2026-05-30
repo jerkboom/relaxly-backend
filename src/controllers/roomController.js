@@ -1,6 +1,46 @@
 const asyncHandler = require('express-async-handler');
 const Room = require('../models/Room');
 const Hostel = require('../models/Hostel');
+const { sendSuccess, sendError } = require('../utils/responseHandler');
+
+const normalizeRoomAvailabilityInput = (body) => {
+  const capacity = Number(body.capacity || 0);
+  const requestedAvailableBeds = Number(
+    body.availableBeds === undefined ? capacity : body.availableBeds
+  );
+  const clampedAvailableBeds = Math.max(
+    0,
+    Math.min(requestedAvailableBeds, capacity)
+  );
+  const genderAllocation = body.genderAllocation || 'Mixed';
+
+  let maleAvailableBeds =
+    body.maleAvailableBeds === undefined ? null : Number(body.maleAvailableBeds);
+  let femaleAvailableBeds =
+    body.femaleAvailableBeds === undefined ? null : Number(body.femaleAvailableBeds);
+
+  if (genderAllocation === 'Male') {
+    maleAvailableBeds = maleAvailableBeds ?? clampedAvailableBeds;
+    femaleAvailableBeds = 0;
+  } else if (genderAllocation === 'Female') {
+    maleAvailableBeds = 0;
+    femaleAvailableBeds = femaleAvailableBeds ?? clampedAvailableBeds;
+  } else if (maleAvailableBeds === null && femaleAvailableBeds === null) {
+    maleAvailableBeds = Math.ceil(clampedAvailableBeds / 2);
+    femaleAvailableBeds = clampedAvailableBeds - maleAvailableBeds;
+  } else {
+    maleAvailableBeds = maleAvailableBeds ?? 0;
+    femaleAvailableBeds = femaleAvailableBeds ?? 0;
+  }
+
+  return {
+    ...body,
+    availableBeds: maleAvailableBeds + femaleAvailableBeds,
+    maleAvailableBeds,
+    femaleAvailableBeds,
+    genderAllocation,
+  };
+};
 
 const assertOwnerCanManageHostel = async (hostelId, userId) => {
   const hostel = await Hostel.findById(hostelId).select('owner');
@@ -69,6 +109,14 @@ const createRoom = asyncHandler(async (req, res) => {
 
   await assertOwnerCanManageHostel(hostel, req.user.id);
 
+  const normalizedAvailability = normalizeRoomAvailabilityInput({
+    capacity,
+    availableBeds,
+    maleAvailableBeds,
+    femaleAvailableBeds,
+    genderAllocation,
+  });
+
   const room = await Room.create({
     hostel,
     roomType,
@@ -76,14 +124,14 @@ const createRoom = asyncHandler(async (req, res) => {
     price,
     billingPeriod,
     capacity,
-    availableBeds: availableBeds || 0,
-    maleAvailableBeds: maleAvailableBeds || 0,
-    femaleAvailableBeds: femaleAvailableBeds || 0,
+    availableBeds: normalizedAvailability.availableBeds,
+    maleAvailableBeds: normalizedAvailability.maleAvailableBeds,
+    femaleAvailableBeds: normalizedAvailability.femaleAvailableBeds,
     privateWashroom,
     hasAC,
     images: images || [],
     featuredImage,
-    genderAllocation,
+    genderAllocation: normalizedAvailability.genderAllocation,
     amenities: amenities || [],
     description,
     roomStatus: roomStatus || 'available',
@@ -108,10 +156,7 @@ const createRoom = asyncHandler(async (req, res) => {
     availableRooms: availableRoomsCount,
   });
 
-  res.status(201).json({
-    message: 'Room created successfully',
-    room: populatedRoom,
-  });
+  sendSuccess(res, populatedRoom, 'Room created successfully', 201);
 });
 
 // GET ALL ROOMS
@@ -123,7 +168,7 @@ const getRooms = asyncHandler(async (req, res) => {
     .populate('hostel', '_id name location')
     .sort({ createdAt: -1 });
 
-  res.status(200).json(rooms);
+  sendSuccess(res, rooms, 'Rooms retrieved successfully');
 });
 
 // GET SINGLE ROOM
@@ -133,29 +178,42 @@ const getSingleRoom = asyncHandler(async (req, res) => {
     '_id name location'
   );
   if (!room) {
-    res.status(404);
-    throw new Error('Room not found');
+    return sendError(res, 'Room not found', 404);
   }
-  res.status(200).json(room);
+  sendSuccess(res, room, 'Room details retrieved');
 });
 
 // UPDATE ROOM
 const updateRoom = asyncHandler(async (req, res) => {
   const room = await Room.findById(req.params.id);
   if (!room) {
-    res.status(404);
-    throw new Error('Room not found');
+    return sendError(res, 'Room not found', 404);
   }
   await assertOwnerCanManageHostel(room.hostel, req.user.id);
 
-  const updatedRoom = await Room.findByIdAndUpdate(
-    req.params.id,
-    pickRoomFields(req.body),
-    {
-      new: true,
-      runValidators: true,
-    }
-  ).populate('hostel', '_id name location');
+  const update = pickRoomFields(req.body);
+  Object.assign(room, update);
+
+  if (
+    Object.prototype.hasOwnProperty.call(update, 'availableBeds') ||
+    Object.prototype.hasOwnProperty.call(update, 'maleAvailableBeds') ||
+    Object.prototype.hasOwnProperty.call(update, 'femaleAvailableBeds') ||
+    Object.prototype.hasOwnProperty.call(update, 'genderAllocation') ||
+    Object.prototype.hasOwnProperty.call(update, 'capacity')
+  ) {
+    const normalizedAvailability = normalizeRoomAvailabilityInput(room.toObject());
+    room.availableBeds = normalizedAvailability.availableBeds;
+    room.maleAvailableBeds = normalizedAvailability.maleAvailableBeds;
+    room.femaleAvailableBeds = normalizedAvailability.femaleAvailableBeds;
+    room.genderAllocation = normalizedAvailability.genderAllocation;
+  }
+
+  await room.save();
+
+  const updatedRoom = await Room.findById(room._id).populate(
+    'hostel',
+    '_id name location'
+  );
 
   // Sync hostel room counts if relevant fields changed
   const relevantFields = ['availableBeds', 'maleAvailableBeds', 'femaleAvailableBeds', 'roomStatus'];
@@ -170,18 +228,14 @@ const updateRoom = asyncHandler(async (req, res) => {
     await Hostel.findByIdAndUpdate(room.hostel, { availableRooms: availableRoomsCount });
   }
 
-  res.status(200).json({
-    message: 'Room updated successfully',
-    room: updatedRoom,
-  });
+  sendSuccess(res, updatedRoom, 'Room updated successfully');
 });
 
 // DELETE ROOM
 const deleteRoom = asyncHandler(async (req, res) => {
   const room = await Room.findById(req.params.id);
   if (!room) {
-    res.status(404);
-    throw new Error('Room not found');
+    return sendError(res, 'Room not found', 404);
   }
   await assertOwnerCanManageHostel(room.hostel, req.user.id);
   const hostelId = room.hostel;
@@ -200,9 +254,7 @@ const deleteRoom = asyncHandler(async (req, res) => {
     availableRooms: availableRoomsCount,
   });
 
-  res.status(200).json({
-    message: 'Room deleted successfully',
-  });
+  sendSuccess(res, null, 'Room deleted successfully');
 });
 
 module.exports = {

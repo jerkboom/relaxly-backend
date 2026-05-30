@@ -15,6 +15,9 @@ const Room =
 const Notification =
   require('../models/Notification');
 
+const PayoutQueue =
+  require('../models/PayoutQueue');
+
 const getStudentDashboard =
   asyncHandler(
     async (req, res) => {
@@ -89,6 +92,9 @@ const getStudentDashboard =
 const getOwnerDashboard =
   asyncHandler(
     async (req, res) => {
+      console.log('--- Owner Dashboard Request ---');
+      console.log('User:', { id: req.user._id, role: req.user.role, email: req.user.email });
+
       const ownerId = req.user.id;
 
       // 1. GET ALL HOSTELS OWNED BY THIS OWNER
@@ -146,17 +152,14 @@ const getOwnerDashboard =
 
       const totalBookings = allBookings.length;
 
-      const approvedBookings = allBookings.filter(
-        (booking) => booking.bookingStatus === 'approved'
-      ).length;
-
-      const totalRevenue = allBookings
+      // Earnings: only paid bookings that are approved
+      const earnings = allBookings
         .filter(
           (booking) =>
             booking.paymentStatus === 'paid' &&
             booking.bookingStatus === 'approved'
         )
-        .reduce((sum, booking) => sum + (booking.amount || 0), 0);
+        .reduce((sum, booking) => sum + (booking.ownerAmount || 0), 0);
 
       // 5. NOTIFICATIONS
       const notificationsCount =
@@ -185,16 +188,28 @@ const getOwnerDashboard =
           .sort({ createdAt: -1 })
           .limit(5);
 
+            // 7. PAYOUT STATS
+      const payouts = await PayoutQueue.find({ owner: ownerId });
+      const pendingPayouts = payouts.filter(p => ['pending', 'approved', 'processing', 'otp_pending'].includes(p.status)).reduce((sum, p) => sum + (p.finalTransferAmount || 0), 0);
+      const paidPayouts = payouts.filter(p => p.status === 'paid').reduce((sum, p) => sum + (p.finalTransferAmount || 0), 0);
+
+      // 8. LIVE BALANCE CALCULATION
+      // Total earnings from all paid+approved bookings MINUS what has already been sent to bank (paidPayouts)
+      const liveBalance = Math.max(0, earnings - paidPayouts);
+
+      // Return requested fields + backward compatibility for frontend
       res.status(200).json({
-        success: true,
         totalHostels,
         totalRooms,
         totalBookings,
-        approvedBookings,
-        totalRevenue,
         occupancyRate,
-        notificationsCount,
         recentBookings,
+        earnings,
+        totalRevenue: earnings, // Total lifetime earnings
+        liveBalance,            // Current owed amount
+        notificationsCount,
+        pendingPayouts,
+        paidPayouts,
       });
     }
   );
@@ -203,3 +218,4 @@ module.exports = {
   getStudentDashboard,
   getOwnerDashboard,
 };
+
