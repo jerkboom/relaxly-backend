@@ -1,0 +1,37 @@
+name: Backend CI Pipeline
+
+# This tells the robot WHEN to run
+on:
+  push:
+    branches: [ "main" ]
+  pull_request:
+    branches: [ "main" ]
+
+# This tells the robot WHAT to do
+jobs:
+  build-and-test:
+    runs-on: ubuntu-latest
+
+    steps:
+    # 1. Download your code into the virtual machine
+    - name: Checkout Code
+      uses: actions/checkout@v4
+
+    # 2. Install Node.js
+    - name: Setup Node.js
+      uses: actions/setup-node@v4
+      with:
+        node-version: '20.x' # Uses a stable version of Node
+        cache: 'npm'
+
+    # 3. Install your packages (clean install)
+    - name: Install Dependencies
+      run: npm ci
+
+    # 4. Check for syntax/build errors (if you have a build script)
+    - name: Build Check
+      run: npm run build --if-present
+
+    # 5. Run tests (if you have a test script in package.json)
+    - name: Run Tests
+      run: npm test --if-present
