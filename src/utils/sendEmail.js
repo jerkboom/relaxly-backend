@@ -1,28 +1,46 @@
 const nodemailer = require('nodemailer');
 
-const sendEmail = async (options) => {
-  console.log('--- EMAIL SEND START ---');
-  console.log('To:', options.email);
-  console.log('Subject:', options.subject);
-  console.log('Using User:', process.env.EMAIL_USER);
+// Singleton transporter for efficiency
+let transporter = null;
 
-  try {
-    const transporter = nodemailer.createTransport({
+const createTransporter = () => {
+  if (!transporter) {
+    const config = {
       host: 'smtp.gmail.com',
-      port: 465,
-      secure: true, // use SSL
+      port: 587,
+      secure: false, // Use STARTTLS
+      requireTLS: true,
       auth: {
         user: process.env.EMAIL_USER,
         pass: process.env.EMAIL_PASS,
       },
       tls: {
+        // Do not fail on invalid certs
         rejectUnauthorized: false
       }
-    });
+    };
 
-    // Verify connection configuration
-    await transporter.verify();
-    console.log('Transporter verified and ready');
+    transporter = nodemailer.createTransport(config);
+    
+    // Verify connection on creation
+    transporter.verify((error, success) => {
+      if (error) {
+        console.error('✗ SMTP Connection Failed:', error.message);
+      } else {
+        console.log('✓ SMTP Connected and ready to send emails');
+      }
+    });
+  }
+  return transporter;
+};
+
+const sendEmail = async (options) => {
+  console.log('--- EMAIL SEND START ---');
+  console.log('To:', options.email);
+  console.log('Subject:', options.subject);
+
+  try {
+    const mailTransporter = createTransporter();
 
     const mailOptions = {
       from: `"Relaxly" <${process.env.EMAIL_USER}>`,
@@ -31,17 +49,14 @@ const sendEmail = async (options) => {
       html: options.message,
     };
 
-    const info = await transporter.sendMail(mailOptions);
+    const info = await mailTransporter.sendMail(mailOptions);
     console.log('--- EMAIL SEND SUCCESS ---');
     console.log('Message ID:', info.messageId);
-    console.log('Response:', info.response);
     return info;
   } catch (error) {
     console.error('--- EMAIL SEND ERROR ---');
-    console.error('Full Error Object:', JSON.stringify(error, null, 2));
     console.error('Error Message:', error.message);
     console.error('Error Code:', error.code);
-    console.error('Error Command:', error.command);
     throw error;
   }
 };
