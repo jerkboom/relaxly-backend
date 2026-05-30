@@ -89,10 +89,27 @@ const registerUser = asyncHandler(
       `${process.env.FRONTEND_URL}/verify-email/${verificationToken}`;
 
     const message = `
-      <p>Welcome to Relaxly.</p>
-      <p>Click the link below to verify your email address:</p>
-      <p><a href="${verificationUrl}">${verificationUrl}</a></p>
-      <p>This link expires in 24 hours.</p>
+      <div style="font-family: Arial, sans-serif; max-width: 600px; margin: 0 auto; border: 1px solid #e2e8f0; border-radius: 12px; overflow: hidden;">
+        <div style="background-color: #2563eb; padding: 20px; text-align: center;">
+          <h1 style="color: #ffffff; margin: 0; font-size: 24px;">Relaxly</h1>
+        </div>
+        <div style="padding: 30px; color: #1e293b; line-height: 1.6;">
+          <h2 style="color: #0f172a; margin-top: 0;">Welcome to Relaxly!</h2>
+          <p>Thank you for joining Relaxly. We're excited to help you find your perfect student accommodation.</p>
+          <p>Please verify your email address to get started:</p>
+          <div style="text-align: center; margin: 30px 0;">
+            <a href="${verificationUrl}" style="background-color: #2563eb; color: #ffffff; padding: 14px 24px; text-decoration: none; border-radius: 8px; display: inline-block; font-weight: bold;">Verify Email</a>
+          </div>
+          <p>This link expires in <strong>24 hours</strong>.</p>
+          <p style="font-size: 14px; color: #64748b; margin-top: 20px; border-top: 1px solid #e2e8f0; padding-top: 20px;">
+            If the button above doesn't work, copy and paste this link into your browser:<br>
+            <a href="${verificationUrl}" style="color: #2563eb;">${verificationUrl}</a>
+          </p>
+        </div>
+        <div style="background-color: #f8fafc; padding: 20px; text-align: center; color: #94a3b8; font-size: 12px;">
+          &copy; 2026 Relaxly. All rights reserved.
+        </div>
+      </div>
     `;
 
     // Background tasks - Fire and forget with internal error handling
@@ -253,11 +270,25 @@ const forgotPassword = asyncHandler(
       `${process.env.FRONTEND_URL}/reset-password/${resetToken}`;
 
     const message = `
-      <p>You requested a password reset for your Relaxly account.</p>
-      <p>Click the link below to reset your password:</p>
-      <p><a href="${resetUrl}">${resetUrl}</a></p>
-      <p>This link expires in 10 minutes.</p>
-      <p>If you did not request this, you can ignore this email.</p>
+      <div style="font-family: Arial, sans-serif; max-width: 600px; margin: 0 auto; border: 1px solid #e2e8f0; border-radius: 12px; overflow: hidden;">
+        <div style="background-color: #2563eb; padding: 20px; text-align: center;">
+          <h1 style="color: #ffffff; margin: 0; font-size: 24px;">Relaxly</h1>
+        </div>
+        <div style="padding: 30px; color: #1e293b; line-height: 1.6;">
+          <h2 style="color: #0f172a; margin-top: 0;">Password Reset Request</h2>
+          <p>We received a request to reset your password for your Relaxly account.</p>
+          <div style="text-align: center; margin: 30px 0;">
+            <a href="${resetUrl}" style="background-color: #2563eb; color: #ffffff; padding: 14px 24px; text-decoration: none; border-radius: 8px; display: inline-block; font-weight: bold;">Reset Password</a>
+          </div>
+          <p>This link expires in <strong>10 minutes</strong>.</p>
+          <p style="font-size: 14px; color: #64748b; margin-top: 20px; border-top: 1px solid #e2e8f0; padding-top: 20px;">
+            <strong>Security Notice:</strong> If you did not request this, you can safely ignore this email. Your password will remain unchanged.
+          </p>
+        </div>
+        <div style="background-color: #f8fafc; padding: 20px; text-align: center; color: #94a3b8; font-size: 12px;">
+          &copy; 2026 Relaxly. All rights reserved.
+        </div>
+      </div>
     `;
 
     try {
@@ -427,12 +458,33 @@ const resendVerificationEmail = asyncHandler(async (req, res) => {
   const verificationToken = user.generateEmailVerificationToken();
   await user.save();
   
-  const verificationUrl = `${process.env.FRONTEND_URL || 'http://localhost:3000'}/verify-email/${verificationToken}`;
+  const verificationUrl = `${process.env.FRONTEND_URL}/verify-email/${verificationToken}`;
   
   await sendEmail({
     email: user.email,
     subject: 'Verify your Relaxly email',
-    message: `Please verify your email: ${verificationUrl}`
+    message: `
+      <div style="font-family: Arial, sans-serif; max-width: 600px; margin: 0 auto; border: 1px solid #e2e8f0; border-radius: 12px; overflow: hidden;">
+        <div style="background-color: #2563eb; padding: 20px; text-align: center;">
+          <h1 style="color: #ffffff; margin: 0; font-size: 24px;">Relaxly</h1>
+        </div>
+        <div style="padding: 30px; color: #1e293b; line-height: 1.6;">
+          <h2 style="color: #0f172a; margin-top: 0;">Verify Your Email Address</h2>
+          <p>You requested a new verification email for your Relaxly account. Please click the button below to verify your email address:</p>
+          <div style="text-align: center; margin: 30px 0;">
+            <a href="${verificationUrl}" style="background-color: #2563eb; color: #ffffff; padding: 14px 24px; text-decoration: none; border-radius: 8px; display: inline-block; font-weight: bold;">Verify Email</a>
+          </div>
+          <p>This link expires in <strong>24 hours</strong>.</p>
+          <p style="font-size: 14px; color: #64748b; margin-top: 20px; border-top: 1px solid #e2e8f0; padding-top: 20px;">
+            If the button above doesn't work, copy and paste this link into your browser:<br>
+            <a href="${verificationUrl}" style="color: #2563eb;">${verificationUrl}</a>
+          </p>
+        </div>
+        <div style="background-color: #f8fafc; padding: 20px; text-align: center; color: #94a3b8; font-size: 12px;">
+          &copy; 2026 Relaxly. All rights reserved.
+        </div>
+      </div>
+    `
   });
 
   res.status(200).json({
