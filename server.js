@@ -120,16 +120,17 @@ const allowedOrigins = [
   'http://127.0.0.1:3000',
   'http://127.0.0.1:3001',
   'http://172.20.10.4:3000',
-  'https://adminrelaxly.netlify.app',
-];
+  process.env.FRONTEND_URL, // Pulls your main site URL from Render
+  process.env.ADMIN_URL     // Pulls your new Netlify admin URL from Render
+].filter(Boolean); // This ensures if a variable is empty, it doesn't break the list
 
 app.use(
   cors({
-    origin: true,
-    credentials: false,
+    origin: allowedOrigins,
+    credentials: true,
   })
 );
-app.options('/{*splat}', cors());
+app.options('*', cors());
 
 /* =========================================
    SECURITY
