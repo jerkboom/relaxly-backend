@@ -120,9 +120,9 @@ const allowedOrigins = [
   'http://127.0.0.1:3000',
   'http://127.0.0.1:3001',
   'http://172.20.10.4:3000',
-  process.env.FRONTEND_URL, // Pulls your main site URL from Render
-  process.env.ADMIN_URL     // Pulls your new Netlify admin URL from Render
-].filter(Boolean); // This ensures if a variable is empty, it doesn't break the list
+  process.env.FRONTEND_URL, 
+  process.env.ADMIN_URL     
+].filter(Boolean); 
 
 app.use(
   cors({
@@ -130,7 +130,9 @@ app.use(
     credentials: true,
   })
 );
-app.options('*', cors());
+
+// 👇 Restored this back to your correct Express 5 format!
+app.options('/{*splat}', cors());
 
 /* =========================================
    SECURITY
