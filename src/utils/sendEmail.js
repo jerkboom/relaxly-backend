@@ -30,7 +30,7 @@ const sendEmail = async (options) => {
     const resend = getResendClient();
 
     const { data, error } = await resend.emails.send({
-      from: 'Relaxly <onboarding@resend.dev>',
+      from: `Relaxly <${process.env.EMAIL_FROM || 'noreply@relaxlygh.com'}>`,
       to: options.email,
       subject: options.subject,
       html: options.message,
