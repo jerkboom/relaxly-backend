@@ -1,4 +1,4 @@
-const mongoose = require('mongoose');
+﻿const mongoose = require('mongoose');
 const socketManager = require('../utils/socketManager');
 const axios = require('axios');
 const crypto = require('crypto');
@@ -244,7 +244,7 @@ const applySuccessfulPayment = async (booking, paymentData, eventId, session = n
   booking.paymentMethod = paymentData.channel || 'paystack';
   booking.paymentVerifiedAt = new Date();
 
-  // STEP 2 — VERIFY SNAPSHOT PERSISTENCE
+  // STEP 2 â€” VERIFY SNAPSHOT PERSISTENCE
   // Ensure we persist all financial fields
   booking.basePrice = Number(booking.basePrice) || 0;
   booking.platformAdjustment = Number(booking.platformAdjustment) || 0;
@@ -291,8 +291,8 @@ const applySuccessfulPayment = async (booking, paymentData, eventId, session = n
 const finalizePayment = async (paymentData, eventId, io) => {
   const reference = paymentData.reference;
 
-  // 1. Initial lookup to find the booking
-  const booking = await Booking.findOne({ paymentReference: reference });
+  // 1. Initial lookup to find the booking (CRITICAL: Populate hostel to get owner info)
+  const booking = await Booking.findOne({ paymentReference: reference }).populate('hostel');
   if (!booking) {
     throw new Error(`Booking with reference ${reference} not found`);
   }
@@ -312,28 +312,40 @@ const finalizePayment = async (paymentData, eventId, io) => {
     if (!existingPayout && booking.paymentStatus === 'paid') {
       console.warn(`[SELF_HEAL] PayoutQueue missing for paid booking ${booking._id}. Recovering...`);
       const payoutMethod = await PayoutMethod.findOne({ owner: booking.hostel.owner });
-      await PayoutQueue.create([{
-        booking: booking._id,
-        owner: booking.hostel.owner,
-        hostel: booking.hostel._id,
-        payoutMethod: payoutMethod?._id,
-        grossAmount: Number(booking.ownerAmount),
-        platformFee: Number(booking.adminCommission),
-        netAmount: Number(booking.ownerAmount),
-        amount: Number(booking.ownerAmount),
-        commissionAmount: Number(booking.adminCommission),
-        paystackFee: Number(booking.paystackFee),
-        finalTransferAmount: Number(booking.ownerAmount),
-        recipientCode: payoutMethod?.recipientCode,
-        currency: booking.currency || 'GHS',
-        status: 'pending'
-      }]);
+      await PayoutQueue.updateOne(
+        { booking: booking._id },
+        {
+          $setOnInsert: {
+            booking: booking._id,
+            owner: booking.hostel.owner,
+            hostel: booking.hostel._id,
+            payoutMethod: payoutMethod?._id,
+            grossAmount: Number(booking.ownerAmount),
+            platformFee: Number(booking.adminCommission),
+            netAmount: Number(booking.ownerAmount),
+            amount: Number(booking.ownerAmount),
+            commissionAmount: Number(booking.adminCommission),
+            paystackFee: Number(booking.paystackFee),
+            finalTransferAmount: Number(booking.ownerAmount),
+            recipientCode: payoutMethod?.recipientCode,
+            currency: booking.currency || 'GHS',
+            status: 'pending'
+          }
+        },
+        { upsert: true }
+      );
     }
 
     // Ensure booking status is synced even if ledger exists (Self-healing)
     if (booking.paymentStatus !== 'paid') {
       await applySuccessfulPayment(booking, paymentData, eventId);
     }
+    return booking;
+  }
+
+  // If a concurrent webhook already marked the booking paid, do not replay ledger or payout side effects from the manual verify endpoint.
+  if (booking.paymentStatus === 'paid') {
+    console.log('DEBUG: Booking already paid; skipping duplicate finalization for reference:', reference);
     return booking;
   }
 
@@ -489,34 +501,52 @@ const finalizePayment = async (paymentData, eventId, io) => {
         metadata: { info: 'Allocation to owner (Liability)' },
       },
     ];
-
-    await TransactionLedger.insertMany(ledgerEntries, { session });
-
-    // C. Create Payout Queue Entry
-    const payoutMethod = await PayoutMethod.findOne({ owner: updatedBooking.hostel.owner }).session(session);
-    
-    await PayoutQueue.create([{
+    const ledgerAlreadyExists = await TransactionLedger.findOne({
       booking: updatedBooking._id,
-      owner: updatedBooking.hostel.owner,
-      hostel: updatedBooking.hostel._id,
-      payoutMethod: payoutMethod?._id,
-      grossAmount: Number(updatedBooking.ownerAmount),
-      platformFee: Number(updatedBooking.adminCommission),
-      netAmount: Number(updatedBooking.ownerAmount),
-      amount: Number(updatedBooking.ownerAmount),
-      commissionAmount: Number(updatedBooking.adminCommission),
-      paystackFee: Number(updatedBooking.paystackFee),
-      finalTransferAmount: Number(updatedBooking.ownerAmount),
-      recipientCode: payoutMethod?.recipientCode,
-      currency: updatedBooking.currency || 'GHS',
-      status: 'pending',
-      metadata: {
-        studentId: updatedBooking.student._id,
-        reference,
-        journalGroup,
-        taxReserve: updatedBooking.taxReserve
-      }
-    }], { session });
+      reference,
+      type: 'payment'
+    }).session(session);
+
+    if (!ledgerAlreadyExists) {
+      await TransactionLedger.insertMany(ledgerEntries, { session });
+    }
+
+    // C. Create Payout Queue Entry idempotently
+    const existingPayout = await PayoutQueue.findOne({
+      booking: updatedBooking._id
+    }).session(session);
+
+    if (!existingPayout) {
+      const payoutMethod = await PayoutMethod.findOne({ owner: updatedBooking.hostel.owner }).session(session);
+      await PayoutQueue.updateOne(
+        { booking: updatedBooking._id },
+        {
+          $setOnInsert: {
+            booking: updatedBooking._id,
+            owner: updatedBooking.hostel.owner,
+            hostel: updatedBooking.hostel._id,
+            payoutMethod: payoutMethod?._id,
+            grossAmount: Number(updatedBooking.ownerAmount),
+            platformFee: Number(updatedBooking.adminCommission),
+            netAmount: Number(updatedBooking.ownerAmount),
+            amount: Number(updatedBooking.ownerAmount),
+            commissionAmount: Number(updatedBooking.adminCommission),
+            paystackFee: Number(updatedBooking.paystackFee),
+            finalTransferAmount: Number(updatedBooking.ownerAmount),
+            recipientCode: payoutMethod?.recipientCode,
+            currency: updatedBooking.currency || 'GHS',
+            status: 'pending',
+            metadata: {
+              studentId: updatedBooking.student._id,
+              reference,
+              journalGroup,
+              taxReserve: updatedBooking.taxReserve
+            }
+          }
+        },
+        { upsert: true, session }
+      );
+    }
 
     // COMMIT ALL
     await session.commitTransaction();
@@ -532,10 +562,20 @@ const finalizePayment = async (paymentData, eventId, io) => {
     });
 
     return updatedBooking;
-
   } catch (error) {
     await session.abortTransaction();
     session.endSession();
+
+    const paidBooking = await Booking.findOne({
+      paymentReference: reference,
+      paymentStatus: 'paid'
+    }).populate('hostel');
+
+    if (paidBooking) {
+      console.warn(`[FINALIZE_IDEMPOTENT_RETURN] Finalization side effect raced for ${reference}; returning paid booking. Error: ${error.message}`);
+      return paidBooking;
+    }
+
     throw error;
   }
 };
@@ -593,7 +633,7 @@ const dispatchPaymentNotifications = async (booking, reference, journalGroup, io
   if (owner?.email) {
     await sendEmail({
       email: owner.email,
-      subject: 'New Booking Received • Relaxly',
+      subject: 'New Booking Received â€¢ Relaxly',
       message: `New booking for ${finalBooking.hostel.name} by ${finalBooking.student.name}.` // Simplified for brevity in this replace, you can use full HTML
     });
   }
@@ -602,7 +642,7 @@ const dispatchPaymentNotifications = async (booking, reference, journalGroup, io
   if (finalBooking.student?.email) {
     await sendEmail({
       email: finalBooking.student.email,
-      subject: 'Booking Confirmed • Relaxly',
+      subject: 'Booking Confirmed â€¢ Relaxly',
       message: `Your booking at ${finalBooking.hostel.name} is confirmed. Code: ${finalBooking.bookingCode}`
     });
   }
@@ -1036,3 +1076,6 @@ module.exports = {
   verifyPayment,
   paystackWebhook,
 };
+
+
+
