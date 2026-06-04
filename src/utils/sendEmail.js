@@ -1,4 +1,4 @@
-const { Resend } = require('resend');
+﻿const { Resend } = require('resend');
 
 // Singleton Resend client
 let resendClient = null;
@@ -6,7 +6,7 @@ let resendClient = null;
 const getResendClient = () => {
   if (!resendClient) {
     if (!process.env.RESEND_API_KEY) {
-      console.warn('⚠️ RESEND_API_KEY is missing from environment variables');
+      console.warn('RESEND_API_KEY is missing from environment variables');
     }
     resendClient = new Resend(process.env.RESEND_API_KEY);
   }
@@ -51,3 +51,4 @@ const sendEmail = async (options) => {
 };
 
 module.exports = sendEmail;
+

@@ -12,6 +12,10 @@ const PayoutQueue = require('../models/PayoutQueue');
 const PayoutMethod = require('../models/PayoutMethod');
 const sendEmail = require('../utils/sendEmail');
 const {
+  buildStudentBookingConfirmationEmail,
+  buildHostBookingNotificationEmail,
+} = require('../utils/emailTemplates');
+const {
   expireBookingReservation,
   logLifecycleEvent,
   restoreRoomBed,
@@ -244,7 +248,7 @@ const applySuccessfulPayment = async (booking, paymentData, eventId, session = n
   booking.paymentMethod = paymentData.channel || 'paystack';
   booking.paymentVerifiedAt = new Date();
 
-  // STEP 2 â€” VERIFY SNAPSHOT PERSISTENCE
+  // STEP 2 - VERIFY SNAPSHOT PERSISTENCE
   // Ensure we persist all financial fields
   booking.basePrice = Number(booking.basePrice) || 0;
   booking.platformAdjustment = Number(booking.platformAdjustment) || 0;
@@ -628,22 +632,31 @@ const dispatchPaymentNotifications = async (booking, reference, journalGroup, io
       },
     },
   ]);
-
   // 2. SEND EMAIL TO OWNER
   if (owner?.email) {
+    const ownerEmail = buildHostBookingNotificationEmail({
+      booking: finalBooking,
+      owner,
+    });
+
     await sendEmail({
       email: owner.email,
-      subject: 'New Booking Received â€¢ Relaxly',
-      message: `New booking for ${finalBooking.hostel.name} by ${finalBooking.student.name}.` // Simplified for brevity in this replace, you can use full HTML
+      subject: ownerEmail.subject,
+      message: ownerEmail.html,
     });
   }
 
   // 3. SEND EMAIL TO STUDENT
   if (finalBooking.student?.email) {
+    const studentEmail = buildStudentBookingConfirmationEmail({
+      booking: finalBooking,
+      owner,
+    });
+
     await sendEmail({
       email: finalBooking.student.email,
-      subject: 'Booking Confirmed â€¢ Relaxly',
-      message: `Your booking at ${finalBooking.hostel.name} is confirmed. Code: ${finalBooking.bookingCode}`
+      subject: studentEmail.subject,
+      message: studentEmail.html,
     });
   }
 
@@ -1076,6 +1089,8 @@ module.exports = {
   verifyPayment,
   paystackWebhook,
 };
+
+
 
 
 
