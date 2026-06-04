@@ -306,6 +306,30 @@ const finalizePayment = async (paymentData, eventId, io) => {
 
   if (existingLedger) {
     console.log('DEBUG: Ledger entry already exists for reference:', reference);
+    
+    // SELF-HEALING: Check if PayoutQueue entry exists
+    const existingPayout = await PayoutQueue.findOne({ booking: booking._id });
+    if (!existingPayout && booking.paymentStatus === 'paid') {
+      console.warn(`[SELF_HEAL] PayoutQueue missing for paid booking ${booking._id}. Recovering...`);
+      const payoutMethod = await PayoutMethod.findOne({ owner: booking.hostel.owner });
+      await PayoutQueue.create([{
+        booking: booking._id,
+        owner: booking.hostel.owner,
+        hostel: booking.hostel._id,
+        payoutMethod: payoutMethod?._id,
+        grossAmount: Number(booking.ownerAmount),
+        platformFee: Number(booking.adminCommission),
+        netAmount: Number(booking.ownerAmount),
+        amount: Number(booking.ownerAmount),
+        commissionAmount: Number(booking.adminCommission),
+        paystackFee: Number(booking.paystackFee),
+        finalTransferAmount: Number(booking.ownerAmount),
+        recipientCode: payoutMethod?.recipientCode,
+        currency: booking.currency || 'GHS',
+        status: 'pending'
+      }]);
+    }
+
     // Ensure booking status is synced even if ledger exists (Self-healing)
     if (booking.paymentStatus !== 'paid') {
       await applySuccessfulPayment(booking, paymentData, eventId);
@@ -857,6 +881,7 @@ const verifyPayment =
           }
         );
       } catch (error) {
+        console.error(`[GATEWAY_ERROR] Paystack verification failed for ${reference}:`, error.message);
         return res.status(400).json({
           success: false,
           message: error.response?.data?.message || 'Payment verification failed at gateway'
@@ -868,19 +893,44 @@ const verifyPayment =
 
       if (paystackData && paystackData.status === 'success') {
         // FALLBACK: Trigger finalization if webhook is slow
-        const io = req.app.get('io');
-        const updatedBooking = await finalizePayment(paystackData, null, io);
+        try {
+          const io = req.app.get('io');
+          const updatedBooking = await finalizePayment(paystackData, null, io);
 
-        return res.status(200).json({
-          success: true,
-          message: 'Payment verified and booking finalized',
-          booking: updatedBooking,
-          data: updatedBooking
-        });
+          return res.status(200).json({
+            success: true,
+            message: 'Payment verified and booking finalized',
+            booking: updatedBooking,
+            data: updatedBooking
+          });
+        } catch (finalizeError) {
+          console.error(`[FINALIZE_CRASH] Payment succeeded at gateway but local finalization failed for ${reference}:`, finalizeError.message);
+          
+          // Re-fetch booking to see if it was actually saved despite the catch block (race condition with webhook)
+          const reFetchedBooking = await Booking.findOne({ paymentReference: reference });
+          if (reFetchedBooking?.paymentStatus === 'paid') {
+            return res.status(200).json({
+              success: true,
+              message: 'Payment verified successfully (Finalized via concurrent process)',
+              booking: reFetchedBooking,
+              data: reFetchedBooking
+            });
+          }
+
+          return res.status(500).json({
+            success: false,
+            message: 'Payment confirmed at gateway but failed to update local booking. Our team has been notified.',
+            error: finalizeError.message
+          });
+        }
       }
 
       if (paystackData && ['failed', 'abandoned'].includes(paystackData.status)) {
-        await recordUnsuccessfulPayment(paystackData);
+        try {
+          await recordUnsuccessfulPayment(paystackData);
+        } catch (recordError) {
+          console.error(`[RECORD_ERROR] Failed to record unsuccessful payment for ${reference}:`, recordError.message);
+        }
       }
 
       logLifecycleEvent('payment_verification_pending', {

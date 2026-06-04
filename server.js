@@ -55,6 +55,8 @@ const analyticsTracker = require('./src/middleware/analyticsTracker');
 
 const app = express();
 
+app.set('trust proxy', 1);
+
 /* =========================================
    CONNECT DATABASE
 ========================================= */

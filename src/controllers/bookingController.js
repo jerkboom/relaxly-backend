@@ -404,7 +404,14 @@ const cancelBooking =
       booking.bookingStatus ===
       'approved'
     ) {
-      return sendError(res, 'Approved bookings cannot be cancelled', 400);
+      return sendError(res, 'Approved bookings cannot be cancelled via this endpoint. Please contact support.', 400);
+    }
+
+    if (
+      booking.paymentStatus ===
+      'paid'
+    ) {
+      return sendError(res, 'Paid bookings cannot be cancelled. Please request a refund through the support center.', 400);
     }
 
     if (
