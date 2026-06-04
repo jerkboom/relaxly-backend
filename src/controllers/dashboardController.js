@@ -18,11 +18,19 @@ const Notification =
 const PayoutQueue =
   require('../models/PayoutQueue');
 
+const cache = require('../utils/cache');
+
 const getStudentDashboard =
   asyncHandler(
     async (req, res) => {
       const studentId =
         req.user.id;
+
+      const cacheKey = `student_dashboard_${studentId}`;
+      const cached = cache.get(cacheKey);
+      if (cached) {
+        return res.status(200).json(cached);
+      }
 
       const bookings =
         await Booking.find({
@@ -75,7 +83,7 @@ const getStudentDashboard =
             0
           );
 
-      res.status(200).json({
+      const responseData = {
         stats: {
           totalBookings,
           activeBookings,
@@ -85,7 +93,12 @@ const getStudentDashboard =
 
         recentBookings:
           bookings.slice(0, 5),
-      });
+      };
+
+      // CACHE DATA
+      cache.set(cacheKey, responseData, 60); // 60 seconds
+
+      res.status(200).json(responseData);
     }
   );
 
@@ -96,6 +109,12 @@ const getOwnerDashboard =
       console.log('User:', { id: req.user._id, role: req.user.role, email: req.user.email });
 
       const ownerId = req.user.id;
+
+      const cacheKey = `owner_dashboard_${ownerId}`;
+      const cached = cache.get(cacheKey);
+      if (cached) {
+        return res.status(200).json(cached);
+      }
 
       // 1. GET ALL HOSTELS OWNED BY THIS OWNER
       const hostels =
@@ -197,8 +216,7 @@ const getOwnerDashboard =
       // Total earnings from all paid+approved bookings MINUS what has already been sent to bank (paidPayouts)
       const liveBalance = Math.max(0, earnings - paidPayouts);
 
-      // Return requested fields + backward compatibility for frontend
-      res.status(200).json({
+      const responseData = {
         totalHostels,
         totalRooms,
         totalBookings,
@@ -210,7 +228,13 @@ const getOwnerDashboard =
         notificationsCount,
         pendingPayouts,
         paidPayouts,
-      });
+      };
+
+      // CACHE DATA
+      cache.set(cacheKey, responseData, 60); // 60 seconds
+
+      // Return requested fields + backward compatibility for frontend
+      res.status(200).json(responseData);
     }
   );
 

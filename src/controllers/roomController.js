@@ -2,6 +2,7 @@ const asyncHandler = require('express-async-handler');
 const Room = require('../models/Room');
 const Hostel = require('../models/Hostel');
 const { sendSuccess, sendError } = require('../utils/responseHandler');
+const cache = require('../utils/cache');
 
 const normalizeRoomAvailabilityInput = (body) => {
   const capacity = Number(body.capacity || 0);
@@ -156,6 +157,10 @@ const createRoom = asyncHandler(async (req, res) => {
     availableRooms: availableRoomsCount,
   });
 
+  // INVALIDATE CACHE
+  cache.delete(`hostel_details_${hostel}`);
+  cache.deleteMatching('hostels_search_');
+
   sendSuccess(res, populatedRoom, 'Room created successfully', 201);
 });
 
@@ -228,6 +233,11 @@ const updateRoom = asyncHandler(async (req, res) => {
     await Hostel.findByIdAndUpdate(room.hostel, { availableRooms: availableRoomsCount });
   }
 
+  // INVALIDATE CACHE
+  cache.delete(`room_meta_${room._id}`);
+  cache.delete(`hostel_details_${room.hostel}`);
+  cache.deleteMatching('hostels_search_');
+
   sendSuccess(res, updatedRoom, 'Room updated successfully');
 });
 
@@ -250,12 +260,17 @@ const deleteRoom = asyncHandler(async (req, res) => {
   });
 
   await Hostel.findByIdAndUpdate(hostelId, {
-    totalRooms: totalRoomsCount,
-    availableRooms: availableRoomsCount,
+  totalRooms: totalRoomsCount,
+  availableRooms: availableRoomsCount,
   });
 
+  // INVALIDATE CACHE
+  cache.delete(`room_meta_${room._id}`);
+  cache.delete(`hostel_details_${hostelId}`);
+  cache.deleteMatching('hostels_search_');
+
   sendSuccess(res, null, 'Room deleted successfully');
-});
+  });
 
 module.exports = {
   createRoom,

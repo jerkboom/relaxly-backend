@@ -4,6 +4,7 @@ const asyncHandler = require('express-async-handler');
 const Hostel = require('../models/Hostel');
 const Room = require('../models/Room');
 const { sendSuccess, sendError } = require('../utils/responseHandler');
+const cache = require('../utils/cache');
 
 const pickHostelFields = (body) => {
   const allowedFields = [
@@ -27,11 +28,29 @@ const createHostel = asyncHandler(async (req, res) => {
     ...data,
     owner: req.user.id,
   });
+
+  // INVALIDATE SEARCH CACHE
+  cache.deleteMatching('hostels_search_');
+
   sendSuccess(res, hostel, 'Hostel created successfully', 201);
 });
 
 // GET ALL HOSTELS WITH SEARCH, FILTERING, SORTING & PAGINATION
 const getHostels = asyncHandler(async (req, res) => {
+  // CACHE CHECK: Sort keys to ensure deterministic key generation
+  const sortedQuery = Object.keys(req.query)
+    .sort()
+    .reduce((acc, key) => {
+      acc[key] = req.query[key];
+      return acc;
+    }, {});
+
+  const cacheKey = `hostels_search_${JSON.stringify(sortedQuery)}`;
+  const cached = cache.get(cacheKey);
+  if (cached) {
+    return sendSuccess(res, cached, 'Hostels retrieved from cache');
+  }
+
   console.log('HOSTEL QUERY PARAMS:', req.query);
 
   const {
@@ -207,13 +226,18 @@ const getHostels = asyncHandler(async (req, res) => {
     image: h.image || h.featuredImage || (h.images && h.images.length > 0 ? h.images[0] : null)
   }));
 
-  sendSuccess(res, {
+  const responseData = {
     total,
     currentPage: pageNum,
     totalPages: Math.ceil(total / limitNum),
     hostels: mappedHostels,
     results: mappedHostels
-  }, 'Hostels retrieved successfully');
+  };
+
+  // CACHE DATA
+  cache.set(cacheKey, responseData, 300); // 5 minutes
+
+  sendSuccess(res, responseData, 'Hostels retrieved successfully');
 });
 
 // GET OWNER HOSTELS
@@ -234,6 +258,12 @@ const getOwnerHostels = asyncHandler(async (req, res) => {
 
 // GET SINGLE HOSTEL
 const getSingleHostel = asyncHandler(async (req, res) => {
+  const cacheKey = `hostel_details_${req.params.id}`;
+  const cached = cache.get(cacheKey);
+  if (cached) {
+    return sendSuccess(res, cached, 'Hostel details retrieved from cache');
+  }
+
   const hostel = await Hostel.findById(req.params.id)
     .populate('university', 'name location region')
     .populate('owner', 'name email phone profileImage')
@@ -246,6 +276,9 @@ const getSingleHostel = asyncHandler(async (req, res) => {
     title: hostel.title || hostel.name,
     image: hostel.image || hostel.featuredImage || (hostel.images && hostel.images.length > 0 ? hostel.images[0] : null)
   };
+
+  // CACHE DATA
+  cache.set(cacheKey, h, 600); // 10 minutes
 
   sendSuccess(res, h, 'Hostel details retrieved');
 });
@@ -269,6 +302,11 @@ const updateHostel = asyncHandler(async (req, res) => {
     pickHostelFields(req.body),
     { new: true, runValidators: true }
   );
+
+  // INVALIDATE CACHE
+  cache.delete(`hostel_details_${req.params.id}`);
+  cache.deleteMatching('hostels_search_');
+
   sendSuccess(res, updatedHostel, 'Hostel updated successfully');
 });
 
@@ -280,6 +318,11 @@ const deleteHostel = asyncHandler(async (req, res) => {
     return sendError(res, 'Not authorized to delete this hostel', 401);
   }
   await hostel.deleteOne();
+
+  // INVALIDATE CACHE
+  cache.delete(`hostel_details_${req.params.id}`);
+  cache.deleteMatching('hostels_search_');
+
   sendSuccess(res, null, 'Hostel deleted successfully');
 });
 

@@ -10,11 +10,19 @@ const adminUserService = require('../services/adminUserService');
 const hostelModerationService = require('../services/hostelModerationService');
 const inviteCodeService = require('../services/inviteCodeService');
 const bookingService = require('../services/bookingService');
+const cache = require('../utils/cache');
 
 // --- PLATFORM SETTINGS ---
 
 const getPlatformSettings = asyncHandler(async (req, res) => {
+  const cacheKey = 'platform_settings';
+  const cached = cache.get(cacheKey);
+  if (cached) {
+    return sendSuccess(res, cached, 'Platform settings retrieved from cache');
+  }
+
   const settings = await PlatformSettings.getSettings();
+  cache.set(cacheKey, settings, 1800); // 30 minutes
   sendSuccess(res, settings);
 });
 
@@ -81,6 +89,10 @@ const updatePlatformSettings = asyncHandler(async (req, res) => {
     metadata: req.body 
   });
   
+  // INVALIDATE CACHE
+  cache.delete('platform_settings');
+  cache.delete('public_platform_settings');
+  
   sendSuccess(res, settings, 'Platform settings updated');
 });
 
@@ -121,6 +133,10 @@ const updateMaintenanceMode = asyncHandler(async (req, res) => {
       message: maintenanceMessage
     }
   });
+
+  // INVALIDATE CACHE
+  cache.delete('platform_settings');
+  cache.delete('public_platform_settings');
 
   sendSuccess(res, settings, `Maintenance mode ${maintenanceMode ? 'enabled' : 'disabled'}`);
 });
@@ -385,6 +401,13 @@ const getFinancePayouts = asyncHandler(async (req, res) => {
 // --- ANALYTICS ---
 const getAnalyticsOverview = asyncHandler(async (req, res) => {
   const { timeframe } = req.query;
+
+  const cacheKey = `admin_dashboard_analytics_${timeframe || '30days'}`;
+  const cached = cache.get(cacheKey);
+  if (cached) {
+    return sendSuccess(res, cached, 'Admin analytics retrieved from cache');
+  }
+
   const User = require('../models/User');
   const Hostel = require('../models/Hostel');
   const PayoutQueue = require('../models/PayoutQueue');
@@ -441,7 +464,7 @@ const getAnalyticsOverview = asyncHandler(async (req, res) => {
     ])
   ]);
 
-  sendSuccess(res, {
+  const responseData = {
     users: { totalStudents, totalOwners },
     hostels: { totalHostels, verifiedHostels, pendingHostels },
     bookings: { totalBookings, active: activeBookings, completed: completedBookings, pending: pendingBookings, cancelled: cancelledBookings },
@@ -457,7 +480,12 @@ const getAnalyticsOverview = asyncHandler(async (req, res) => {
     conversionRate: totalBookings > 0 ? Math.round(((activeBookings + completedBookings) / totalBookings) * 1000) / 10 : 0,
     revenueChart: revenueChart.map(item => ({ date: item._id, revenue: item.revenue })),
     activeSessions: 1
-  });
+  };
+
+  // CACHE DATA
+  cache.set(cacheKey, responseData, 60); // 60 seconds
+
+  sendSuccess(res, responseData);
 });
 
 const getAnalyticsRevenueChart = asyncHandler(async (req, res) => { sendSuccess(res, []); });
@@ -465,9 +493,15 @@ const getAnalyticsTopHostels = asyncHandler(async (req, res) => { sendSuccess(re
 
 // --- PUBLIC SETTINGS ---
 const getPublicSettings = asyncHandler(async (req, res) => {
+  const cacheKey = 'public_platform_settings';
+  const cached = cache.get(cacheKey);
+  if (cached) {
+    return sendSuccess(res, cached, 'Public settings retrieved from cache');
+  }
+
   try {
     const settings = await PlatformSettings.getSettings();
-    sendSuccess(res, {
+    const responseData = {
       serviceFee: settings?.serviceFee ?? 10,
       serviceFeePercent: settings?.serviceFeePercent ?? 0,
       maintenanceMode: settings?.maintenanceMode ?? false,
@@ -478,7 +512,10 @@ const getPublicSettings = asyncHandler(async (req, res) => {
         phone: '+233 XX XXX XXXX',
         whatsapp: '+233XXXXXXXXX'
       }
-    });
+    };
+
+    cache.set(cacheKey, responseData, 1800); // 30 minutes
+    sendSuccess(res, responseData);
   } catch (error) {
     sendSuccess(res, {
       serviceFee: 10,
@@ -622,6 +659,11 @@ const getLiveActivityFeed = asyncHandler(async (req, res) => {
   sendSuccess(res, []);
 });
 
+const getCacheStats = asyncHandler(async (req, res) => {
+  const stats = cache.getStats();
+  sendSuccess(res, stats, 'Cache statistics retrieved');
+});
+
 module.exports = {
   getPlatformSettings,
   updatePlatformSettings,
@@ -680,5 +722,6 @@ module.exports = {
   deleteAdmin,
   getSystemHealth,
   getFraudMonitoring,
-  getLiveActivityFeed
+  getLiveActivityFeed,
+  getCacheStats
 };

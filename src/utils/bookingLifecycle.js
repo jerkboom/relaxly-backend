@@ -109,6 +109,9 @@ const restoreRoomBed = async (bookingId, reason = 'restored') => {
 
   await syncHostelAvailability(booking.hostel);
 
+  // INVALIDATE CACHE: Critical to prevent "Sold Out" stale data
+  cache.delete(`room_meta_${booking.room}`);
+
   logLifecycleEvent('bed_restored', {
     bookingId: booking._id.toString(),
     roomId: booking.room.toString(),

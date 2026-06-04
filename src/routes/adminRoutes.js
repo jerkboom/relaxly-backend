@@ -60,6 +60,7 @@ const {
   getFraudMonitoring,
   getLiveActivityFeed,
   getPublicSettings,
+  getCacheStats,
 } = require('../controllers/adminController');
 
 const {
@@ -169,5 +170,6 @@ router.delete('/admins/:id', authorizeAdminRoles('super_admin'), deleteAdmin);
 router.get('/monitoring/system-health', authorizeAdminRoles('super_admin'), getSystemHealth);
 router.get('/monitoring/fraud', authorizeAdminRoles('super_admin', 'finance_admin'), getFraudMonitoring);
 router.get('/monitoring/activity', authorizeAdminRoles('super_admin', 'moderator'), getLiveActivityFeed);
+router.get('/monitoring/cache-stats', authorizeAdminRoles('super_admin'), getCacheStats);
 
 module.exports = router;

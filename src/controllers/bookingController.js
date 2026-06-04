@@ -209,7 +209,6 @@ const createBooking =
           cache.set(roomMetaCacheKey, updatedRoomData, 300);
         }
 
-        cache.delete(`hostel_availability_${roomData.hostel._id}`);
         const totalDuration = Date.now() - tStart;
         console.log(`BOOKING_PERF: Total=${totalDuration}ms | Check=${dCheck}ms | Data=${dData}ms | Tx=${dTx}ms | Resp=${dResp}ms`);
         logLifecycleEvent('booking_created', { bookingId: newBooking._id, duration: totalDuration });
