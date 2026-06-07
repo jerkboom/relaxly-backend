@@ -73,6 +73,7 @@ const registerUser = asyncHandler(
       // Owners with valid invite codes are auto-approved and verified
       userPayload.governmentIdUrl = governmentIdUrl;
       userPayload.isEmailVerified = true;
+      userPayload.isOwnerVerified = true;
       userPayload.verificationStatus = 'approved';
       userPayload.accountStatus = 'active';
       userPayload.approvedAt = Date.now();
