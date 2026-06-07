@@ -132,6 +132,32 @@ const registerUser = asyncHandler(
         message: 'Welcome! Your hostel owner account has been securely activated via invite code.',
         type: 'account',
       });
+
+      // Background task for owner welcome email
+      const dashboardUrl = `${process.env.FRONTEND_URL}/login`;
+      const ownerEmailMessage = `
+        <div style="font-family: Arial, sans-serif; max-width: 600px; margin: 0 auto; border: 1px solid #e2e8f0; border-radius: 12px; overflow: hidden;">
+          <div style="background-color: #2563eb; padding: 20px; text-align: center;">
+            <h1 style="color: #ffffff; margin: 0; font-size: 24px;">Relaxly</h1>
+          </div>
+          <div style="padding: 30px; color: #1e293b; line-height: 1.6;">
+            <h2 style="color: #0f172a; margin-top: 0;">Welcome to Relaxly!</h2>
+            <p>Your hostel owner account has been securely activated via invite code.</p>
+            <p>You can now log in to your dashboard to manage your hostels and bookings.</p>
+            <div style="text-align: center; margin: 30px 0;">
+              <a href="${dashboardUrl}" style="background-color: #2563eb; color: #ffffff; padding: 14px 24px; text-decoration: none; border-radius: 8px; display: inline-block; font-weight: bold;">Go to Dashboard</a>
+            </div>
+          </div>
+        </div>
+      `;
+
+      (async () => {
+        try {
+          await sendEmail({ email: user.email, subject: 'Welcome to Relaxly - Account Activated', message: ownerEmailMessage });
+        } catch (error) {
+          console.error('Background owner email task failed:', error.message);
+        }
+      })();
     }
 
     res.status(201).json({
