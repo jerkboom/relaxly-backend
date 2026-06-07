@@ -75,7 +75,6 @@ const authorizeAdminRoles = require('../middleware/adminPermissionMiddleware');
 
 // PUBLIC ADMIN ROUTES
 router.post('/auth/login', loginAdmin);
-router.post('/auth/activate', activateAdmin);
 router.post('/admins/activate', activateAdmin);
 
 // ALL OTHER ROUTES ARE PROTECTED
@@ -91,7 +90,7 @@ router.get('/users', authorizeAdminRoles('super_admin', 'moderator', 'support_ad
 router.get('/students', authorizeAdminRoles('super_admin', 'moderator', 'support_admin'), getAllStudentsForAdmin);
 router.get('/owners', authorizeAdminRoles('super_admin', 'moderator', 'support_admin'), getAllOwnersForAdmin);
 router.patch('/users/:id/status', authorizeAdminRoles('super_admin', 'moderator'), updateUserAccountStatus);
-router.patch('/users/:id/role', authorizeAdminRoles('super_admin'), updateUserRole); // Only Super Admins can change roles
+router.patch('/users/:id/role', authorizeAdminRoles('super_admin'), updateUserRole); // Only Super Admins can change roles   
 router.get('/users/:id/details', authorizeAdminRoles('super_admin', 'moderator', 'support_admin'), getUserDetails);
 
 // OWNER MANAGEMENT
@@ -114,7 +113,7 @@ router.patch('/hostels/:id/reject', authorizeAdminRoles('super_admin', 'moderato
 router.patch('/hostels/:id/suspend', authorizeAdminRoles('super_admin', 'moderator'), suspendHostel);
 
 // OPERATIONS
-router.get('/bookings', authorizeAdminRoles('super_admin', 'finance_admin', 'moderator', 'support_admin'), getAllBookings);
+router.get('/bookings', authorizeAdminRoles('super_admin', 'finance_admin', 'moderator', 'support_admin'), getAllBookings);  
 // AUDIT LOG SYSTEM
 router.get('/activity/export', exportMyActivityLogs);
 router.get('/activity/:id', getMyActivityLogDetail);
@@ -132,20 +131,17 @@ router.get('/finance/payouts', authorizeAdminRoles('super_admin', 'finance_admin
 router.post('/payouts/:id/confirm-otp', authorizeAdminRoles('super_admin', 'finance_admin'), confirmPayoutOtp);
 
 // ANALYTICS
-router.get('/analytics/overview', authorizeAdminRoles('super_admin', 'finance_admin', 'moderator'), getAnalyticsOverview);
-router.get('/analytics/revenue-chart', authorizeAdminRoles('super_admin', 'finance_admin'), getAnalyticsRevenueChart);
+router.get('/analytics/overview', authorizeAdminRoles('super_admin', 'finance_admin', 'moderator'), getAnalyticsOverview);   
+router.get('/analytics/revenue-chart', authorizeAdminRoles('super_admin', 'finance_admin'), getAnalyticsRevenueChart);       
 router.get('/analytics/top-hostels', authorizeAdminRoles('super_admin', 'moderator'), getAnalyticsTopHostels);
-router.get('/analytics/traffic', authorizeAdminRoles('super_admin', 'finance_admin', 'moderator'), getTrafficAnalytics);
-router.get('/analytics/revenue', authorizeAdminRoles('super_admin', 'finance_admin', 'moderator'), getRevenueAnalytics);
-router.get('/analytics/funnels', authorizeAdminRoles('super_admin', 'finance_admin', 'moderator'), getConversionFunnels);
+router.get('/analytics/traffic', authorizeAdminRoles('super_admin', 'finance_admin', 'moderator'), getTrafficAnalytics);     
+router.get('/analytics/revenue', authorizeAdminRoles('super_admin', 'finance_admin', 'moderator'), getRevenueAnalytics);     
+router.get('/analytics/funnels', authorizeAdminRoles('super_admin', 'finance_admin', 'moderator'), getConversionFunnels);    
 router.get('/analytics/export', authorizeAdminRoles('super_admin', 'finance_admin', 'moderator'), exportAnalytics);
 
-// ACCESS CODES
-router.post('/access-codes/generate', authorizeAdminRoles('super_admin', 'moderator'), generateInviteCode);
-
 // BOOKING ACTIONS
-router.patch('/bookings/:id/approve', authorizeAdminRoles('super_admin', 'moderator', 'support_admin'), approveBooking);
-router.patch('/bookings/:id/cancel', authorizeAdminRoles('super_admin', 'moderator', 'support_admin'), cancelBooking);
+router.patch('/bookings/:id/approve', authorizeAdminRoles('super_admin', 'moderator', 'support_admin'), approveBooking);     
+router.patch('/bookings/:id/cancel', authorizeAdminRoles('super_admin', 'moderator', 'support_admin'), cancelBooking);       
 router.patch('/bookings/:id/mark-paid', authorizeAdminRoles('super_admin', 'finance_admin'), markBookingPaid);
 
 // PERSONAL PROFILE

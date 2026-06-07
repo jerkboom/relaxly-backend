@@ -1,20 +1,12 @@
 const bcrypt = require('bcrypt');
 const jwt = require('jsonwebtoken');
 const crypto = require('crypto');
-
-const asyncHandler = require(
-  'express-async-handler'
-);
+const asyncHandler = require('express-async-handler');
 
 const User = require('../models/User');
-
-const sendEmail = require(
-  '../utils/sendEmail'
-);
-
-const {
-  createNotification,
-} = require('../services/notificationService');
+const OwnerInviteCode = require('../models/OwnerInviteCode');
+const sendEmail = require('../utils/sendEmail');
+const { createNotification } = require('../services/notificationService');
 
 // REGISTER USER
 const registerUser = asyncHandler(
@@ -25,113 +17,134 @@ const registerUser = asyncHandler(
       password,
       gender,
       role = 'student',
+      accessCode, // Used for owners only
+      governmentIdUrl, // Used for owners only
     } = req.body;
 
-    // Check required fields
-    if (
-      !name ||
-      !email ||
-      !password
-    ) {
+    // 1. HARD VALIDATION: Required Fields for everyone
+    if (!name || !email || !password) {
       res.status(400);
-
-      throw new Error(
-        'Please provide all fields'
-      );
+      throw new Error('Please provide all required fields (name, email, password).');
     }
 
-    // Check if user already exists
-    const existingUser =
-      await User.findOne({ email });
-
+    // 2. DUPLICATE CHECK: Prevent double registration
+    const existingUser = await User.findOne({ email: email.toLowerCase() });
     if (existingUser) {
       res.status(400);
-
-      throw new Error(
-        'User already exists'
-      );
+      throw new Error('An account already exists for this email.');
     }
 
-    // Create user
-    const user = await User.create({
+    // 3. ROLE-SPECIFIC SECURITY VALIDATION
+    let userPayload = {
       name,
-      email,
+      email: email.toLowerCase(),
       password,
       gender,
-      role: ['student', 'owner'].includes(role)
-        ? role
-        : 'student',
-    });
+      role: role === 'owner' ? 'owner' : 'student',
+    };
 
-    // Generate verification token
-    const verificationToken =
-      user.generateEmailVerificationToken();
+    let inviteRecord = null;
 
-    await user.save();
+    if (userPayload.role === 'owner') {
+      // SECURITY: Owners MUST have a valid invite code and ID
+      if (!accessCode || !governmentIdUrl) {
+        res.status(400);
+        throw new Error('Hostel Owners must provide a valid access code and Government ID.');
+      }
 
-    // 1. Return the API response immediately after user creation and token generation
+      // VALIDATION: Check OwnerInviteCode against assigned email
+      inviteRecord = await OwnerInviteCode.findOne({ 
+        code: accessCode, 
+        assignedToEmail: email.toLowerCase(), 
+        isUsed: false 
+      });
+
+      if (!inviteRecord) {
+        res.status(403);
+        throw new Error('Access not granted. Invalid or mismatched access code for this email.');
+      }
+
+      // Check expiration
+      if (!inviteRecord.neverExpires && inviteRecord.expiresAt && new Date() > inviteRecord.expiresAt) {
+        res.status(400);
+        throw new Error('This access code has expired.');
+      }
+
+      // Owners with valid invite codes are auto-approved and verified
+      userPayload.governmentIdUrl = governmentIdUrl;
+      userPayload.isEmailVerified = true;
+      userPayload.verificationStatus = 'approved';
+      userPayload.accountStatus = 'active';
+      userPayload.approvedAt = Date.now();
+    }
+
+    // 4. EXECUTION: Create user account
+    const user = await User.create(userPayload);
+
+    // 5. SECURITY SEAL: Mark invite code as used
+    if (inviteRecord) {
+      inviteRecord.isUsed = true;
+      inviteRecord.usedBy = user._id;
+      await inviteRecord.save();
+    }
+
+    // 6. POST-REGISTRATION TASKS
+    if (user.role === 'student') {
+      // Students need to verify email
+      const verificationToken = user.generateEmailVerificationToken();
+      await user.save();
+
+      const verificationUrl = `${process.env.FRONTEND_URL}/verify-email/${verificationToken}`;
+      const emailMessage = `
+        <div style="font-family: Arial, sans-serif; max-width: 600px; margin: 0 auto; border: 1px solid #e2e8f0; border-radius: 12px; overflow: hidden;">
+          <div style="background-color: #2563eb; padding: 20px; text-align: center;">
+            <h1 style="color: #ffffff; margin: 0; font-size: 24px;">Relaxly</h1>
+          </div>
+          <div style="padding: 30px; color: #1e293b; line-height: 1.6;">
+            <h2 style="color: #0f172a; margin-top: 0;">Welcome to Relaxly!</h2>
+            <p>Please verify your email address to complete your student registration:</p>
+            <div style="text-align: center; margin: 30px 0;">
+              <a href="${verificationUrl}" style="background-color: #2563eb; color: #ffffff; padding: 14px 24px; text-decoration: none; border-radius: 8px; display: inline-block; font-weight: bold;">Verify Email</a>
+            </div>
+          </div>
+        </div>
+      `;
+
+      // Background task
+      (async () => {
+        try {
+          await sendEmail({ email: user.email, subject: 'Verify your Relaxly email', message: emailMessage });
+          await createNotification({
+            user: user._id,
+            title: 'Verify your account',
+            message: 'A verification email has been sent to your email address.',
+            type: 'account',
+          });
+        } catch (error) {
+          console.error('Background email task failed:', error.message);
+        }
+      })();
+    } else {
+      // Owners get a notification about successful activation
+      await createNotification({
+        user: user._id,
+        title: 'Account Activated',
+        message: 'Welcome! Your hostel owner account has been securely activated via invite code.',
+        type: 'account',
+      });
+    }
+
     res.status(201).json({
-      message:
-        'User registered successfully. Please verify your email.',
+      message: user.role === 'owner' 
+        ? 'Account created and activated! You can now login.' 
+        : 'Account created! Please check your email to verify.',
       user: {
         id: user._id,
         name: user.name,
         email: user.email,
         role: user.role,
-        isEmailVerified: user.isEmailVerified,
       },
     });
-
-    // 2. Move email sending to a non-blocking async task
-    // 3. Add proper try/catch around email sending
-    // 4. Ensure registration never hangs if email fails
-    const verificationUrl =
-      `${process.env.FRONTEND_URL}/verify-email/${verificationToken}`;
-
-    const message = `
-      <div style="font-family: Arial, sans-serif; max-width: 600px; margin: 0 auto; border: 1px solid #e2e8f0; border-radius: 12px; overflow: hidden;">
-        <div style="background-color: #2563eb; padding: 20px; text-align: center;">
-          <h1 style="color: #ffffff; margin: 0; font-size: 24px;">Relaxly</h1>
-        </div>
-        <div style="padding: 30px; color: #1e293b; line-height: 1.6;">
-          <h2 style="color: #0f172a; margin-top: 0;">Welcome to Relaxly!</h2>
-          <p>Thank you for joining Relaxly. We're excited to help you find your perfect student accommodation.</p>
-          <p>Please verify your email address to get started:</p>
-          <div style="text-align: center; margin: 30px 0;">
-            <a href="${verificationUrl}" style="background-color: #2563eb; color: #ffffff; padding: 14px 24px; text-decoration: none; border-radius: 8px; display: inline-block; font-weight: bold;">Verify Email</a>
-          </div>
-          <p>This link expires in <strong>24 hours</strong>.</p>
-          <p style="font-size: 14px; color: #64748b; margin-top: 20px; border-top: 1px solid #e2e8f0; padding-top: 20px;">
-            If the button above doesn't work, copy and paste this link into your browser:<br>
-            <a href="${verificationUrl}" style="color: #2563eb;">${verificationUrl}</a>
-          </p>
-        </div>
-        <div style="background-color: #f8fafc; padding: 20px; text-align: center; color: #94a3b8; font-size: 12px;">
-          &copy; 2026 Relaxly. All rights reserved.
-        </div>
-      </div>
-    `;
-
-    // Background tasks - Fire and forget with internal error handling
-    (async () => {
-      try {
-        await sendEmail({
-          email: user.email,
-          subject: 'Verify your Relaxly email',
-          message,
-        });
-
-        await createNotification({
-          user: user._id,
-          title: 'Verify your account',
-          message: 'A verification email has been sent to your email address.',
-          type: 'account',
-        });
-      } catch (error) {
-        // Logging the error instead of throwing prevents the request from hanging
-        console.error('Registration background task failed:', error.message);
-      }
-    })();
   }
 );
 
@@ -281,7 +294,7 @@ const forgotPassword = asyncHandler(
             <a href="${resetUrl}" style="background-color: #2563eb; color: #ffffff; padding: 14px 24px; text-decoration: none; border-radius: 8px; display: inline-block; font-weight: bold;">Reset Password</a>
           </div>
           <p>This link expires in <strong>10 minutes</strong>.</p>
-          <p style="font-size: 14px; color: #64748b; margin-top: 20px; border-top: 1px solid #e2e8f0; padding-top: 20px;">
+          <p style="font-size: 14px; color: #64748b; margin-top: 20px; border-top: 1px solid #e2e8f0; padding-top: 20px;">   
             <strong>Security Notice:</strong> If you did not request this, you can safely ignore this email. Your password will remain unchanged.
           </p>
         </div>
@@ -457,9 +470,9 @@ const resendVerificationEmail = asyncHandler(async (req, res) => {
   }
   const verificationToken = user.generateEmailVerificationToken();
   await user.save();
-  
+
   const verificationUrl = `${process.env.FRONTEND_URL}/verify-email/${verificationToken}`;
-  
+
   await sendEmail({
     email: user.email,
     subject: 'Verify your Relaxly email',
@@ -475,7 +488,7 @@ const resendVerificationEmail = asyncHandler(async (req, res) => {
             <a href="${verificationUrl}" style="background-color: #2563eb; color: #ffffff; padding: 14px 24px; text-decoration: none; border-radius: 8px; display: inline-block; font-weight: bold;">Verify Email</a>
           </div>
           <p>This link expires in <strong>24 hours</strong>.</p>
-          <p style="font-size: 14px; color: #64748b; margin-top: 20px; border-top: 1px solid #e2e8f0; padding-top: 20px;">
+          <p style="font-size: 14px; color: #64748b; margin-top: 20px; border-top: 1px solid #e2e8f0; padding-top: 20px;">   
             If the button above doesn't work, copy and paste this link into your browser:<br>
             <a href="${verificationUrl}" style="color: #2563eb;">${verificationUrl}</a>
           </p>

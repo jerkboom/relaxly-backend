@@ -27,18 +27,18 @@ const getPlatformSettings = asyncHandler(async (req, res) => {
 });
 
 const updatePlatformSettings = asyncHandler(async (req, res) => {
-  const { 
-    commissionRate, 
+  const {
+    commissionRate,
     commissionPercent,
-    serviceFee, 
+    serviceFee,
     serviceFeePercent,
-    manualHostelApproval, 
-    bookingExpirationMinutes, 
-    autoApprovePayments, 
+    manualHostelApproval,
+    bookingExpirationMinutes,
+    autoApprovePayments,
     roomTypeAdjustments,
     supportSettings
   } = req.body;
-  
+
   let settings = await PlatformSettings.findOne();
   if (!settings) settings = await PlatformSettings.getSettings();
 
@@ -49,7 +49,7 @@ const updatePlatformSettings = asyncHandler(async (req, res) => {
   if (manualHostelApproval !== undefined) settings.manualHostelApproval = manualHostelApproval;
   if (bookingExpirationMinutes !== undefined) settings.bookingExpirationMinutes = bookingExpirationMinutes;
   if (autoApprovePayments !== undefined) settings.autoApprovePayments = autoApprovePayments;
-  
+
   if (roomTypeAdjustments !== undefined) {
     // Update Map correctly by iterating entries
     Object.entries(roomTypeAdjustments).forEach(([key, value]) => {
@@ -72,7 +72,7 @@ const updatePlatformSettings = asyncHandler(async (req, res) => {
       res.status(400);
       throw new Error('WhatsApp support number cannot be empty');
     }
-    
+
     settings.supportSettings = {
       ...settings.supportSettings,
       ...supportSettings
@@ -80,25 +80,25 @@ const updatePlatformSettings = asyncHandler(async (req, res) => {
   }
 
   await settings.save();
-  
-  await logAdminAction({ 
-    req, 
-    actionType: 'SETTINGS_UPDATE', 
-    targetType: 'PlatformSettings', 
-    targetId: settings._id, 
-    metadata: req.body 
+
+  await logAdminAction({
+    req,
+    actionType: 'SETTINGS_UPDATE',
+    targetType: 'PlatformSettings',
+    targetId: settings._id,
+    metadata: req.body
   });
-  
+
   // INVALIDATE CACHE
   cache.delete('platform_settings');
   cache.delete('public_platform_settings');
-  
+
   sendSuccess(res, settings, 'Platform settings updated');
 });
 
 const updateMaintenanceMode = asyncHandler(async (req, res) => {
   const { maintenanceMode, maintenanceMessage } = req.body;
-  
+
   if (maintenanceMode === undefined) {
     res.status(400);
     throw new Error('maintenanceMode field is required');
@@ -362,7 +362,7 @@ const getAllInviteCodes = asyncHandler(async (req, res) => {
 
 const revokeInviteCode = asyncHandler(async (req, res) => {
   await inviteCodeService.revokeCode(req.params.id);
-  await logAdminAction({ req, actionType: 'INVITE_REVOKE', targetType: 'OwnerInviteCode', targetId: req.params.id });
+  await logAdminAction({ req, actionType: 'INVITE_REVOKE', targetType: 'OwnerInviteCode', targetId: req.params.id });        
   sendSuccess(res, null, 'Invite code revoked');
 });
 
@@ -411,7 +411,7 @@ const getAnalyticsOverview = asyncHandler(async (req, res) => {
   const User = require('../models/User');
   const Hostel = require('../models/Hostel');
   const PayoutQueue = require('../models/PayoutQueue');
-  
+
   let startDate = new Date();
   if (timeframe === 'today') startDate.setHours(0, 0, 0, 0);
   else if (timeframe === 'last7days') startDate.setDate(startDate.getDate() - 7);
@@ -419,7 +419,7 @@ const getAnalyticsOverview = asyncHandler(async (req, res) => {
   else startDate.setDate(startDate.getDate() - 30);
 
   const dateFilter = { createdAt: { $gte: startDate } };
-  
+
   const [
     totalStudents, totalOwners,
     totalHostels, verifiedHostels, pendingHostels,
@@ -439,13 +439,13 @@ const getAnalyticsOverview = asyncHandler(async (req, res) => {
     Booking.countDocuments({ ...dateFilter, bookingStatus: 'cancelled' }),
     Booking.aggregate([
       { $match: { ...dateFilter, paymentStatus: 'paid' } },
-      { $group: { 
-          _id: null, 
+      { $group: {
+          _id: null,
           total: { $sum: { $ifNull: ['$platformGrossRevenue', '$totalPaid'] } },
           netProfit: { $sum: { $ifNull: ['$platformNetProfit', '$adminCommission'] } },
           taxReserve: { $sum: { $ifNull: ['$taxReserve', 0] } },
           retainedProfit: { $sum: { $ifNull: ['$platformFinalRetainedProfit', '$adminCommission'] } }
-        } 
+        }
       }
     ]),
     PayoutQueue.aggregate([
@@ -468,16 +468,16 @@ const getAnalyticsOverview = asyncHandler(async (req, res) => {
     users: { totalStudents, totalOwners },
     hostels: { totalHostels, verifiedHostels, pendingHostels },
     bookings: { totalBookings, active: activeBookings, completed: completedBookings, pending: pendingBookings, cancelled: cancelledBookings },
-    finance: { 
+    finance: {
       totalRevenue: totalRevenueAgg[0]?.total || 0,
       totalNetProfit: totalRevenueAgg[0]?.netProfit || 0,
       totalTaxReserve: totalRevenueAgg[0]?.taxReserve || 0,
       totalRetainedProfit: totalRevenueAgg[0]?.retainedProfit || 0,
       pendingPayouts: pendingPayoutsAgg[0]?.total || 0,
       successfulPayments: activeBookings + completedBookings, 
-      failedPayments: cancelledBookings 
+      failedPayments: cancelledBookings
     },
-    conversionRate: totalBookings > 0 ? Math.round(((activeBookings + completedBookings) / totalBookings) * 1000) / 10 : 0,
+    conversionRate: totalBookings > 0 ? Math.round(((activeBookings + completedBookings) / totalBookings) * 1000) / 10 : 0,  
     revenueChart: revenueChart.map(item => ({ date: item._id, revenue: item.revenue })),
     activeSessions: 1
   };
@@ -587,7 +587,7 @@ const inviteAdmin = asyncHandler(async (req, res) => {
   const Admin = require('../models/Admin');
   const { email, role, name } = req.body;
   const password = req.body.password || 'TemporaryPassword123!';
-  const admin = new Admin({ name: name || email.split('@')[0], email, password, role, status: 'active', isActive: true });
+  const admin = new Admin({ name: name || email.split('@')[0], email, password, role, status: 'active', isActive: true });   
   await admin.save();
   await logAdminAction({ req, actionType: 'ADMIN_PROVISION', targetType: 'Admin', targetId: admin._id, metadata: { role } });
   sendSuccess(res, admin, 'Admin invitation sent', 201);

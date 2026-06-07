@@ -29,12 +29,12 @@ const roomSchema = new mongoose.Schema(
       type: Number,
     },
 
-    platformAdjustment: {
+    adjustmentAmount: {
       type: Number,
       default: 0,
     },
 
-    displayPrice: {
+    totalPrice: {
       type: Number,
     },
 
@@ -121,26 +121,29 @@ roomSchema.index({ hostel: 1 });
 roomSchema.index({ hostel: 1, availableBeds: 1, roomStatus: 1 });
 roomSchema.index({ hostel: 1, genderAllocation: 1, roomStatus: 1, availableBeds: 1 });
 
-// SYNC AVAILABLE BEDS AND VALIDATE CAPACITY
+// SYNC PRICING AND AVAILABILITY
 roomSchema.pre('save', async function () {
   // 1. CALCULATE PRICING ADJUSTMENTS
-  // Owners enter 'price' which we treat as 'basePrice'
+  // Treat the incoming 'price' field as the base price for owners
   if (this.isModified('price') || this.isNew) {
     this.basePrice = this.price;
   }
 
-  // Fetch global adjustments
-  const settings = await PlatformSettings.getSettings();
-  const adjustment = settings.roomTypeAdjustments?.[this.occupancyStyle] || 0;
-  
-  this.platformAdjustment = adjustment;
-  this.displayPrice = (this.basePrice || this.price) + adjustment;
-  
-  // Ensure the main 'price' field reflects the student's cost (displayPrice)
-  // but only if we have a basePrice to work from
-  if (this.basePrice !== undefined) {
-    this.price = this.displayPrice;
+  // Ensure basePrice is never undefined
+  if (this.basePrice === undefined) {
+    this.basePrice = this.price;
   }
+
+  // Fetch global adjustments based on occupancy style
+  const settings = await PlatformSettings.getSettings();
+  const adjustment = settings.roomTypeAdjustments?.get(this.occupancyStyle) ||
+                     settings.roomTypeAdjustments?.[this.occupancyStyle] || 0;
+
+  this.adjustmentAmount = adjustment;
+  this.totalPrice = this.basePrice + this.adjustmentAmount;
+
+  // IMPORTANT: Update the main price field to reflect the final student cost
+  this.price = this.totalPrice;
 
   // 2. AVAILABILITY SYNC
   // Male-only rooms
