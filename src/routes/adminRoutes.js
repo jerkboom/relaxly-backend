@@ -61,6 +61,7 @@ const {
   getLiveActivityFeed,
   getPublicSettings,
   getCacheStats,
+  getCustomUniversities,
 } = require('../controllers/adminController');
 
 const {
@@ -101,6 +102,9 @@ router.put('/owners/:id/commission', authorizeAdminRoles('super_admin', 'finance
 router.post('/invites/generate', authorizeAdminRoles('super_admin', 'moderator'), generateInviteCode);
 router.get('/invites', authorizeAdminRoles('super_admin', 'moderator', 'support_admin'), getAllInviteCodes);
 router.delete('/invites/:id', authorizeAdminRoles('super_admin', 'moderator'), revokeInviteCode);
+
+// CUSTOM UNIVERSITIES REPORT
+router.get('/universities/custom', authorizeAdminRoles('super_admin', 'moderator'), getCustomUniversities);
 
 // HOSTEL MODERATION
 router.get('/hostels', authorizeAdminRoles('super_admin', 'moderator'), getAllHostelsForAdmin);

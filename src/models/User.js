@@ -1,4 +1,4 @@
-﻿const mongoose = require('mongoose');
+const mongoose = require('mongoose');
 const bcrypt = require('bcryptjs');
 const crypto = require('crypto');
 
@@ -19,6 +19,7 @@ const userSchema = new mongoose.Schema(
       },
       phone: {
         type: String,
+        trim: true,
       },
       isEmailVerified: {
         type: Boolean,
@@ -125,10 +126,8 @@ const userSchema = new mongoose.Schema(
         type: String,
         trim: true,
       },
-      university: {
-        type: mongoose.Schema.Types.ObjectId,
-        ref: 'University',
-      },
+      university: { type: mongoose.Schema.Types.ObjectId, ref: 'University' },
+      customUniversity: { type: String, default: null },
       avatar: {
         type: String,
       },

@@ -5,6 +5,7 @@ const {
   getAdminAnalytics,
   getAdminDashboardStats,
   trackEvent,
+  getPublicStats,
 } = require('../controllers/analyticsController');
 const {
   protect,
@@ -13,6 +14,12 @@ const {
 
 // Public tracking route
 router.post('/track', trackEvent);
+
+// Public stats route
+router.get('/public-stats', getPublicStats);
+
+// Public stats route
+router.get('/public-stats', getPublicStats);
 
 // Owner analytics
 router.get(

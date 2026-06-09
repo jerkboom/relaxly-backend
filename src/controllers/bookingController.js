@@ -269,7 +269,14 @@ const getBookingById =
       await Booking.findById(
         req.params.id
       )
-        .populate('student', 'name email phone avatar')
+        .populate({
+          path: 'student',
+          select: 'name email phone studentId university avatar',
+          populate: {
+            path: 'university',
+            select: 'name'
+          }
+        })
         .populate('room', 'roomType price images description amenities')
         .populate({
           path: 'hostel',
@@ -363,7 +370,14 @@ const getOwnerBookings =
           $in: hostelIds,
         }, paymentStatus: { $ne: 'pending' },
       })
-        .populate('student', 'name email phone avatar')
+        .populate({
+          path: 'student',
+          select: 'name email phone studentId university avatar',
+          populate: {
+            path: 'university',
+            select: 'name'
+          }
+        })
         .populate(
           'room',
           'roomType price'

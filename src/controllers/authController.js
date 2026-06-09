@@ -16,10 +16,10 @@ const registerUser = asyncHandler(
       email,
       password,
       gender,
+      phone,
       role = 'student',
       accessCode, // Used for owners only
-      governmentIdUrl, // Used for owners only
-    } = req.body;
+      governmentIdUrl, university, studentId } = req.body;
 
     // 1. HARD VALIDATION: Required Fields for everyone
     if (!name || !email || !password) {
@@ -40,10 +40,7 @@ const registerUser = asyncHandler(
       email: email.toLowerCase(),
       password,
       gender,
-      role: role === 'owner' ? 'owner' : 'student',
-    };
-
-    let inviteRecord = null;
+      role: role === 'owner' ? 'owner' : 'student', }; if (role !== 'owner') { if (!university || !studentId) { res.status(400); throw new Error('Students must provide their University and Student ID Number.'); } userPayload.university = university; userPayload.studentId = studentId; } let inviteRecord = null;
 
     if (userPayload.role === 'owner') {
       // SECURITY: Owners MUST have a valid invite code and ID

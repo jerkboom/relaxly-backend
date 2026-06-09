@@ -130,7 +130,9 @@ class AdminUserService {
         _id: student._id,
         name: student.name,
         email: student.email,
-        university: student.university ? student.university.name : (student.schoolName || 'N/A'),
+        phone: student.phone || 'N/A',
+        studentId: student.studentId || 'N/A',
+        university: student.customUniversity || (student.university ? student.university.name : (student.schoolName || 'N/A')),
         bookingCount,
         createdAt: student.createdAt,
         status: student.accountStatus
