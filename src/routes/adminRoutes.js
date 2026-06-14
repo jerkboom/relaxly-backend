@@ -41,7 +41,6 @@ const {
   getAnalyticsOverview,
   getAnalyticsRevenueChart,
   getAnalyticsTopHostels,
-  getUnreadNotifications,
   getAdminProfile,
   updateAdminProfile,
   updateAdminPassword,
@@ -62,6 +61,7 @@ const {
   getPublicSettings,
   getCacheStats,
   getCustomUniversities,
+  getOwnerTimeline,
 } = require('../controllers/adminController');
 
 const {
@@ -70,6 +70,7 @@ const {
   getConversionFunnels,
   exportAnalytics,
 } = require('../controllers/analyticsController');
+const studentRoutes = require('./admin/studentRoutes');
 const { confirmPayoutOtp } = require('../controllers/financeController');
 const { protect } = require('../middleware/authMiddleware');
 const authorizeAdminRoles = require('../middleware/adminPermissionMiddleware');
@@ -80,6 +81,9 @@ router.post('/admins/activate', activateAdmin);
 
 // ALL OTHER ROUTES ARE PROTECTED
 router.use(protect);
+
+// STUDENT MANAGEMENT (MODULAR)
+router.use('/students', studentRoutes);
 
 // SETTINGS (Super Admin Only)
 router.get('/settings', authorizeAdminRoles('super_admin', 'finance_admin', 'moderator', 'support_admin'), getPlatformSettings);
@@ -96,6 +100,7 @@ router.get('/users/:id/details', authorizeAdminRoles('super_admin', 'moderator',
 
 // OWNER MANAGEMENT
 router.get('/owners/:id/performance', authorizeAdminRoles('super_admin', 'finance_admin', 'moderator'), getOwnerPerformance);
+router.get('/owners/:id/timeline', authorizeAdminRoles('super_admin', 'moderator', 'support_admin'), getOwnerTimeline);
 router.put('/owners/:id/commission', authorizeAdminRoles('super_admin', 'finance_admin'), updateOwnerCommission);
 
 // INVITE CODES

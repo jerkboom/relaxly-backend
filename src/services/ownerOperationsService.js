@@ -29,7 +29,7 @@ const getOwnerOverview = async (ownerId) => {
       $group: {
         _id: null,
         totalBookings: { $sum: 1 },
-        activeBookings: { $sum: { $cond: [{ $in: ['$bookingStatus', ['pending', 'approved']] }, 1, 0] } },
+        activeBookings: { $sum: { $cond: [{ $in: ['$bookingStatus', ['pending', 'approved', 'checked_in']] }, 1, 0] } },
         completedBookings: { $sum: { $cond: [{ $eq: ['$bookingStatus', 'completed'] }, 1, 0] } },
         cancelledBookings: { $sum: { $cond: [{ $eq: ['$bookingStatus', 'cancelled'] }, 1, 0] } },
         grossRevenue: { $sum: '$totalPaid' },

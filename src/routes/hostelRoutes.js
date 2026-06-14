@@ -7,6 +7,7 @@ const {
   getOwnerHostels,
   getSingleHostel,
   getHostelRooms,
+  getHostelContactDetails,
   updateHostel,
   deleteHostel,
 } = require('../controllers/hostelController');
@@ -62,6 +63,13 @@ router.get(
 router.get(
   '/:id',
   getSingleHostel
+);
+
+// Get owner contact details (Booking-Gated)
+router.get(
+  '/:id/contact',
+  protect,
+  getHostelContactDetails
 );
 
 // Get rooms for hostel

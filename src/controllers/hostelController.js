@@ -5,6 +5,8 @@ const Hostel = require('../models/Hostel');
 const Room = require('../models/Room');
 const { sendSuccess, sendError } = require('../utils/responseHandler');
 const cache = require('../utils/cache');
+const { logOwnerActivity } = require('../utils/ownerActivityLogger');
+const { calculateDistance, estimateWalkingTime } = require('../utils/distanceUtils');
 
 const pickHostelFields = (body) => {
   const allowedFields = [
@@ -15,18 +17,60 @@ const pickHostelFields = (body) => {
   const update = {};
   allowedFields.forEach((field) => {
     if (Object.prototype.hasOwnProperty.call(body, field)) {
-      update[field] = body[field];
+      let value = body[field];
+      
+      // Normalize location for backward compatibility
+      if (field === 'location' && typeof value === 'string') {
+        value = {
+          address: value,
+          city: '',
+          region: '',
+        };
+      }
+      
+      update[field] = value;
     }
   });
+
+  // Handle root-level coordinates if provided separately from location object
+  if (body.latitude !== undefined || body.longitude !== undefined) {
+    if (typeof update.location !== 'object') {
+      update.location = { address: update.location || '', city: '', region: '' };
+    }
+    if (body.latitude !== undefined) update.location.latitude = Number(body.latitude);
+    if (body.longitude !== undefined) update.location.longitude = Number(body.longitude);
+  }
+
   return update;
 };
 
 // CREATE HOSTEL
 const createHostel = asyncHandler(async (req, res) => {
   const data = pickHostelFields(req.body);
+  
+  console.log('[DEBUG] Creating Hostel with data:', JSON.stringify(data, null, 2));
+
   const hostel = await Hostel.create({
     ...data,
     owner: req.user.id,
+  });
+
+  console.log('[DEBUG] Hostel Created successfully. ID:', hostel._id, 'Coords:', hostel.location?.latitude, hostel.location?.longitude);
+
+  // LOG ACTIVITY
+  await logOwnerActivity({
+    ownerId: req.user.id,
+    actorId: req.user.id,
+    actorName: req.user.name,
+    actorRole: req.user.role,
+    eventType: 'hostel',
+    title: 'Hostel Created',
+    description: `Owner created ${hostel.name}`,
+    metadata: {
+      hostelId: hostel._id,
+      hostelName: hostel.name,
+      location: hostel.location
+    }
   });
 
   // INVALIDATE SEARCH CACHE
@@ -86,7 +130,10 @@ const getHostels = asyncHandler(async (req, res) => {
     conditions.push({
       $or: [
         { name: searchRegex },
-        { location: searchRegex },
+        { 'location.address': searchRegex },
+        { 'location.city': searchRegex },
+        { 'location.region': searchRegex },
+        { location: searchRegex }, // Support for legacy string location
         { description: searchRegex },
         { nearbyUniversities: searchRegex }
       ]
@@ -98,8 +145,11 @@ const getHostels = asyncHandler(async (req, res) => {
     const locationRegex = { $regex: String(location), $options: 'i' };
     conditions.push({
       $or: [
-        { location: locationRegex },
-        { name: locationRegex } // Fallback to name if location is used as a general search
+        { 'location.address': locationRegex },
+        { 'location.city': locationRegex },
+        { 'location.region': locationRegex },
+        { location: locationRegex }, // Legacy support
+        { name: locationRegex } // Fallback to name
       ]
     });
   }
@@ -212,7 +262,7 @@ const getHostels = asyncHandler(async (req, res) => {
 
   const hostels = await Hostel.find(filter)
     .populate('university', 'name location region')
-    .populate('owner', 'name email phone profileImage')
+    .populate('owner', 'name profileImage isOwnerVerified verificationStatus')
     .skip(skip)
     .limit(limitNum)
     .sort(sortOption)
@@ -265,22 +315,125 @@ const getSingleHostel = asyncHandler(async (req, res) => {
   }
 
   const hostel = await Hostel.findById(req.params.id)
-    .populate('university', 'name location region')
-    .populate('owner', 'name email phone profileImage')
+    .populate('university', 'name location region latitude longitude')
+    .populate('owner', 'name profileImage isOwnerVerified verificationStatus')
     .lean();
 
   if (!hostel) return sendError(res, 'Hostel not found', 404);
 
+  console.log("--- PROXIMITY CALCULATION AUDIT ---");
+  console.log("HOSTEL LOCATION", hostel.location);
+  console.log("HOSTEL LAT", hostel.location?.latitude);
+  console.log("HOSTEL LNG", hostel.location?.longitude);
+
+  console.log("UNIVERSITY (POPULATED)", hostel.university);
+  console.log("UNI LAT", hostel.university?.latitude);
+  console.log("UNI LNG", hostel.university?.longitude);
+
+  console.log('[DEBUG] Fetched Hostel:', hostel._id, 'Coords in DB:', hostel.location?.latitude, hostel.location?.longitude);
+
+  // DISTANCE CALCULATION
+  let nearestInstitution = null;
+  let distanceKm = null;
+  let walkingMinutes = null;
+
+  if (hostel.university && hostel.university.latitude && hostel.university.longitude) {
+    const hostelLat = hostel.location?.latitude;
+    const hostelLon = hostel.location?.longitude;
+    const uniLat = hostel.university.latitude;
+    const uniLon = hostel.university.longitude;
+
+    if (hostelLat && hostelLon) {
+      distanceKm = calculateDistance(hostelLat, hostelLon, uniLat, uniLon);
+      walkingMinutes = estimateWalkingTime(distanceKm);
+      nearestInstitution = {
+        name: hostel.university.name,
+        distanceKm,
+        walkingMinutes
+      };
+    }
+  }
+
+  console.log("NEAREST INSTITUTION RESULT:", nearestInstitution);
+  console.log("-----------------------------------");
+
   const h = {
     ...hostel,
+    // BACKWARD COMPATIBILITY: Flatten location object to string
+    location: hostel.location && typeof hostel.location === 'object' ? hostel.location.address : hostel.location,
+    latitude: hostel.location?.latitude,
+    longitude: hostel.location?.longitude,
+    locationDetails: hostel.location,
+    nearestInstitution, // New field for calculated proximity
     title: hostel.title || hostel.name,
     image: hostel.image || hostel.featuredImage || (hostel.images && hostel.images.length > 0 ? hostel.images[0] : null)
   };
+
+  console.log('[DEBUG] Returning mapped hostel with proximity:', JSON.stringify(nearestInstitution));
+
+  console.log('[DEBUG] Returning mapped hostel with root coords:', h.latitude, h.longitude);
 
   // CACHE DATA
   cache.set(cacheKey, h, 600); // 10 minutes
 
   sendSuccess(res, h, 'Hostel details retrieved');
+});
+
+/**
+ * @desc    Get owner contact details if student has a booking
+ * @route   GET /api/hostels/:id/contact
+ * @access  Private
+ */
+const getHostelContactDetails = asyncHandler(async (req, res) => {
+  const hostel = await Hostel.findById(req.params.id).select('owner name');
+  if (!hostel) return sendError(res, 'Hostel not found', 404);
+
+  const userId = req.user.id;
+  const userRole = req.user.role;
+
+  // 1. Full Access: Admin or the Owner of the hostel
+  if (userRole === 'admin' || hostel.owner.toString() === userId) {
+    const owner = await User.findById(hostel.owner).select('name email phone whatsapp profileImage');
+    
+    logLifecycleEvent('contact_access_granted', {
+      studentId: userId,
+      hostelId: hostel._id,
+      actorRole: userRole,
+      reason: 'direct_access'
+    });
+
+    return sendSuccess(res, owner, 'Owner contact info retrieved');
+  }
+
+  // 2. Gated Access: Student with a valid booking
+  const Booking = require('../models/Booking');
+  const booking = await Booking.findOne({
+    student: userId,
+    hostel: hostel._id,
+    bookingStatus: { $in: ['pending', 'approved', 'checked_in', 'completed'] }
+  }).select('_id bookingStatus');
+
+  if (!booking) {
+    logLifecycleEvent('contact_access_denied', {
+      studentId: userId,
+      hostelId: hostel._id,
+      reason: 'no_valid_booking'
+    });
+
+    return sendError(res, 'Book a room to access host contact information', 403);
+  }
+
+  // Access Granted
+  const owner = await User.findById(hostel.owner).select('name email phone whatsapp profileImage');
+  
+  logLifecycleEvent('contact_access_granted', {
+    studentId: userId,
+    hostelId: hostel._id,
+    bookingId: booking._id,
+    reason: 'valid_booking'
+  });
+
+  sendSuccess(res, owner, 'Owner contact info retrieved');
 });
 
 // GET ROOMS FOR A HOSTEL
@@ -297,11 +450,55 @@ const updateHostel = asyncHandler(async (req, res) => {
     return sendError(res, 'Not authorized to update this hostel', 401);
   }
 
+  const oldAvailable = hostel.available;
+  const updateData = pickHostelFields(req.body);
+
+  // SMART MERGE FOR LOCATION: Prevent wiping out coordinates during partial updates
+  if (updateData.location) {
+    const existingLocation = typeof hostel.location === 'object' ? hostel.location : {};
+    
+    // If we received a string, it's already been normalized to {address: "..."} by pickHostelFields
+    // If we received an object, we merge it with the existing one
+    updateData.location = {
+      address: updateData.location.address || existingLocation.address || '',
+      city: updateData.location.city || existingLocation.city || '',
+      region: updateData.location.region || existingLocation.region || '',
+      latitude: updateData.location.latitude ?? existingLocation.latitude,
+      longitude: updateData.location.longitude ?? existingLocation.longitude
+    };
+  }
+
   const updatedHostel = await Hostel.findByIdAndUpdate(
     req.params.id,
-    pickHostelFields(req.body),
+    updateData,
     { new: true, runValidators: true }
   );
+
+  console.log('[DEBUG] Hostel Updated successfully. ID:', updatedHostel._id, 'Coords:', updatedHostel.location?.latitude, updatedHostel.location?.longitude);
+
+  // LOG ACTIVITY
+  let activityTitle = 'Hostel Updated';
+  let activityDesc = `Owner updated ${updatedHostel.name}`;
+
+  if (updateData.available !== undefined && updateData.available !== oldAvailable) {
+    activityTitle = updateData.available ? 'Hostel Published' : 'Hostel Unpublished';
+    activityDesc = `Owner ${updateData.available ? 'published' : 'unpublished'} ${updatedHostel.name}`;
+  }
+
+  await logOwnerActivity({
+    ownerId: req.user.id,
+    actorId: req.user.id,
+    actorName: req.user.name,
+    actorRole: req.user.role,
+    eventType: 'hostel',
+    title: activityTitle,
+    description: activityDesc,
+    metadata: {
+      hostelId: updatedHostel._id,
+      hostelName: updatedHostel.name,
+      updatedFields: Object.keys(updateData)
+    }
+  });
 
   // INVALIDATE CACHE
   cache.delete(`hostel_details_${req.params.id}`);
@@ -317,7 +514,27 @@ const deleteHostel = asyncHandler(async (req, res) => {
   if (hostel.owner.toString() !== req.user.id && req.user.role !== 'admin') {
     return sendError(res, 'Not authorized to delete this hostel', 401);
   }
+
+  // CAPTURE INFO BEFORE DELETE
+  const hostelName = hostel.name;
+  const ownerId = hostel.owner;
+
   await hostel.deleteOne();
+
+  // LOG ACTIVITY
+  await logOwnerActivity({
+    ownerId: ownerId,
+    actorId: req.user.id,
+    actorName: req.user.name,
+    actorRole: req.user.role,
+    eventType: 'hostel',
+    title: 'Hostel Deleted',
+    description: `Owner deleted ${hostelName}`,
+    metadata: {
+      hostelId: req.params.id,
+      hostelName: hostelName
+    }
+  });
 
   // INVALIDATE CACHE
   cache.delete(`hostel_details_${req.params.id}`);
@@ -332,6 +549,7 @@ module.exports = {
   getOwnerHostels,
   getSingleHostel,
   getHostelRooms,
+  getHostelContactDetails,
   updateHostel,
   deleteHostel,
 };

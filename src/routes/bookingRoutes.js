@@ -10,6 +10,8 @@ const {
   cancelBooking,
   updateBookingStatus,
   checkInStudent,
+  updateRoomAssignment,
+  checkOutStudent,
 } = require('../controllers/bookingController');
 
 const {
@@ -101,6 +103,8 @@ router.put(
 );
 
 router.patch('/:id/check-in', protect, authorizeRoles('owner', 'admin'), validateObjectIds(['id']), checkInStudent);
+router.patch('/:id/room-assignment', protect, authorizeRoles('owner', 'admin'), validateObjectIds(['id']), updateRoomAssignment);
+router.patch('/:id/check-out', protect, authorizeRoles('owner', 'admin'), validateObjectIds(['id']), checkOutStudent);
 
 module.exports = router;
 

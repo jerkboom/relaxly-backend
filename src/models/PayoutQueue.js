@@ -19,6 +19,14 @@ const payoutQueueSchema = new mongoose.Schema(
       ref: 'Hostel',
       required: true,
     },
+    transferMethod: {
+      type: String,
+      enum: ['momo', 'bank'],
+    },
+    provider: String, // e.g. 'MTN', 'Vodafone'
+    bankName: String,
+    accountNumber: String,
+    accountName: String,
     payoutMethod: {
       type: mongoose.Schema.Types.ObjectId,
       ref: 'PayoutMethod',

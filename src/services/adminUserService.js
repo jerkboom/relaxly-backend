@@ -1,6 +1,7 @@
 const User = require('../models/User');
 const Booking = require('../models/Booking');
 const Hostel = require('../models/Hostel');
+const University = require('../models/University');
 const { logAdminAction } = require('../utils/auditLogger');
 
 class AdminUserService {
@@ -20,7 +21,7 @@ class AdminUserService {
       ];
     }
     
-    const users = await User.find(query).sort({ createdAt: -1 });
+    const users = await User.find(query).populate({ path: 'university', select: 'name' }).sort({ createdAt: -1 });
     return users;
   }
 
@@ -91,37 +92,120 @@ class AdminUserService {
    * Get detailed user profile and metrics
    */
   async getUserDetails(userId) {
-    const user = await User.findById(userId).select('-password');
+    const User = require('../models/User');
+    const Booking = require('../models/Booking');
+    const TransactionLedger = require('../models/TransactionLedger');
+    const AdminAuditLog = require('../models/AdminAuditLog');
+
+    const user = await User.findById(userId)
+      .select('-password')
+      .populate({ path: 'university', select: 'name' });
+
     if (!user) {
       const error = new Error('User not found');
       error.code = 'NOT_FOUND';
       throw error;
     }
 
-    // Determine if student or owner based on role/history
+    // 1. Fetch Bookings with full population
     const bookings = await Booking.find({ student: user._id })
-      .populate('hostel', 'name location')
+      .populate('hostel', 'name location owner')
+      .populate('room', 'roomType roomNumber')
       .sort({ createdAt: -1 });
 
-    const totalBookings = bookings.length;
-    const successfulPayments = bookings.filter(b => b.paymentStatus === 'paid').length;
-    const totalSpending = bookings.filter(b => b.paymentStatus === 'paid').reduce((sum, b) => sum + b.amount, 0);
+    // 2. Fetch Payments & Potential Refunds (Transactions)
+    const transactions = await TransactionLedger.find({ 
+      $or: [
+        { sender: user._id },
+        { recipient: user._id }
+      ]
+    }).sort({ createdAt: -1 });
 
-    return {
-      user,
-      metrics: {
-        totalBookings,
-        successfulPayments,
-        totalSpending,
-        activeReservations: bookings.filter(b => b.bookingStatus === 'approved').length
-      },
-      bookings: bookings.slice(0, 10)
+    const payments = transactions.filter(t => t.type === 'payment' || t.type === 'booking_fee');
+    const refunds = transactions.filter(t => t.type === 'refund');
+
+    // 3. Room Assignments (from Bookings)
+    const assignments = bookings
+      .filter(b => b.assignedRoomNumber || b.room)
+      .map(b => ({
+        bookingId: b._id,
+        hostel: b.hostel ? b.hostel.name : 'N/A',
+        roomNumber: b.assignedRoomNumber || (b.room ? b.room.roomNumber : 'N/A'),
+        bedNumber: b.assignedBedNumber || 'N/A',
+        status: b.bookingStatus,
+        checkInDate: b.checkInDate
+      }));
+
+    // 4. Activity Logs (Audit Logs where this user is the target)
+    const activityLogs = await AdminAuditLog.find({ 
+      targetId: user._id.toString(),
+      targetType: 'User'
+    })
+    .populate('admin', 'name email')
+    .sort({ createdAt: -1 });
+
+    // 5. Calculate Metrics
+    const currentStay = bookings.find(b => b.bookingStatus === 'checked_in');
+    const totalBookings = bookings.length;
+    const successfulPayments = payments.filter(p => p.status === 'success' || p.status === 'completed').length;
+    const totalSpending = payments
+      .filter(p => p.status === 'success' || p.status === 'completed')
+      .reduce((sum, p) => sum + (p.amount || 0), 0);
+
+    const stats = {
+      totalBookings,
+      activeReservations: bookings.filter(b => ['approved', 'pending'].includes(b.bookingStatus)).length,
+      netSpending: totalSpending,
+      pendingRefunds: refunds.filter(r => r.status === 'pending').length,
+      isCheckedIn: !!currentStay
     };
+
+    const response = {
+      student: user,
+      stats,
+      bookings,
+      payments,
+      refunds,
+      assignments,
+      timeline: activityLogs
+    };
+
+    // TEMPORARY DEBUG LOGS
+    console.log("--- STUDENT PROFILE TRACE START ---");
+    console.log("Target User ID:", userId);
+    console.log("Student Found:", user ? user.email : "NO");
+    console.log("Bookings Count:", bookings.length);
+    console.log("Payments Count:", payments.length);
+    console.log("Refunds Count:", refunds.length);
+    console.log("Assignments Count:", assignments.length);
+    console.log("Activity Logs Count:", activityLogs.length);
+    console.log("Final Stats:", stats);
+    console.log("--- STUDENT PROFILE TRACE END ---");
+
+    return response;
   }
 
-  async getStudentsForAdmin() {
-    const students = await User.find({ role: 'student' })
-      .populate('university', 'name')
+  async getStudentsForAdmin(search) {
+    let query = { role: 'student' };
+    
+    if (search) {
+      // Find students whose room assignment matches
+      const matchedBookings = await Booking.find({ 
+        assignedRoomNumber: { $regex: search, $options: 'i' } 
+      }, 'student');
+      
+      const studentIdsByRoom = matchedBookings.map(b => b.student);
+
+      query.$or = [
+        { name: { $regex: search, $options: 'i' } },
+        { email: { $regex: search, $options: 'i' } },
+        { studentId: { $regex: search, $options: 'i' } },
+        { _id: { $in: studentIdsByRoom } }
+      ];
+    }
+
+    const students = await User.find(query)
+      .populate({ path: 'university', select: 'name' })
       .sort({ createdAt: -1 });
 
     const studentData = await Promise.all(students.map(async (student) => {
@@ -132,7 +216,7 @@ class AdminUserService {
         email: student.email,
         phone: student.phone || 'N/A',
         studentId: student.studentId || 'N/A',
-        university: student.customUniversity || (student.university ? student.university.name : (student.schoolName || 'N/A')),
+        university: student.customUniversity || (student.university && student.university.name ? student.university.name : (student.schoolName || 'N/A')),
         bookingCount,
         createdAt: student.createdAt,
         status: student.accountStatus

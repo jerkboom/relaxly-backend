@@ -3,6 +3,7 @@ const Room = require('../models/Room');
 const Hostel = require('../models/Hostel');
 const { sendSuccess, sendError } = require('../utils/responseHandler');
 const cache = require('../utils/cache');
+const { logOwnerActivity } = require('../utils/ownerActivityLogger');
 
 const normalizeRoomAvailabilityInput = (body) => {
   const capacity = Number(body.capacity || 0);
@@ -144,6 +145,24 @@ const createRoom = asyncHandler(async (req, res) => {
     '_id name location'
   );
 
+  // LOG ACTIVITY
+  await logOwnerActivity({
+    ownerId: req.user.id,
+    actorId: req.user.id,
+    actorName: req.user.name,
+    actorRole: req.user.role,
+    eventType: 'room',
+    title: 'Room Created',
+    description: `Owner created ${roomType} room in ${populatedRoom.hostel?.name}`,
+    metadata: {
+      roomId: room._id,
+      roomType,
+      occupancyStyle,
+      hostelId: hostel,
+      hostelName: populatedRoom.hostel?.name
+    }
+  });
+
   // Sync hostel room counts
   const totalRooms = await Room.countDocuments({ hostel });
   const availableRoomsCount = await Room.countDocuments({
@@ -196,15 +215,17 @@ const updateRoom = asyncHandler(async (req, res) => {
   }
   await assertOwnerCanManageHostel(room.hostel, req.user.id);
 
-  const update = pickRoomFields(req.body);
-  Object.assign(room, update);
+  const oldBeds = room.availableBeds;
+  const oldStatus = room.roomStatus;
+  const updateData = pickRoomFields(req.body);
+  Object.assign(room, updateData);
 
   if (
-    Object.prototype.hasOwnProperty.call(update, 'availableBeds') ||
-    Object.prototype.hasOwnProperty.call(update, 'maleAvailableBeds') ||
-    Object.prototype.hasOwnProperty.call(update, 'femaleAvailableBeds') ||
-    Object.prototype.hasOwnProperty.call(update, 'genderAllocation') ||
-    Object.prototype.hasOwnProperty.call(update, 'capacity')
+    Object.prototype.hasOwnProperty.call(updateData, 'availableBeds') ||
+    Object.prototype.hasOwnProperty.call(updateData, 'maleAvailableBeds') ||
+    Object.prototype.hasOwnProperty.call(updateData, 'femaleAvailableBeds') ||
+    Object.prototype.hasOwnProperty.call(updateData, 'genderAllocation') ||
+    Object.prototype.hasOwnProperty.call(updateData, 'capacity')
   ) {
     const normalizedAvailability = normalizeRoomAvailabilityInput(room.toObject());
     room.availableBeds = normalizedAvailability.availableBeds;
@@ -219,6 +240,32 @@ const updateRoom = asyncHandler(async (req, res) => {
     'hostel',
     '_id name location'
   );
+
+  // LOG ACTIVITY
+  let activityTitle = 'Room Updated';
+  let activityDesc = `Owner updated ${updatedRoom.roomType} room`;
+
+  if (room.availableBeds !== oldBeds || room.roomStatus !== oldStatus) {
+    activityTitle = 'Availability Changed';
+    activityDesc = `Owner changed availability for ${updatedRoom.roomType} room (Status: ${room.roomStatus}, Beds: ${room.availableBeds})`;
+  }
+
+  await logOwnerActivity({
+    ownerId: req.user.id,
+    actorId: req.user.id,
+    actorName: req.user.name,
+    actorRole: req.user.role,
+    eventType: 'room',
+    title: activityTitle,
+    description: activityDesc,
+    metadata: {
+      roomId: updatedRoom._id,
+      roomType: updatedRoom.roomType,
+      hostelId: updatedRoom.hostel?._id,
+      hostelName: updatedRoom.hostel?.name,
+      updatedFields: Object.keys(updateData)
+    }
+  });
 
   // Sync hostel room counts if relevant fields changed
   const relevantFields = ['availableBeds', 'maleAvailableBeds', 'femaleAvailableBeds', 'roomStatus'];
@@ -243,13 +290,34 @@ const updateRoom = asyncHandler(async (req, res) => {
 
 // DELETE ROOM
 const deleteRoom = asyncHandler(async (req, res) => {
-  const room = await Room.findById(req.params.id);
+  const room = await Room.findById(req.params.id).populate('hostel', 'name');
   if (!room) {
     return sendError(res, 'Room not found', 404);
   }
-  await assertOwnerCanManageHostel(room.hostel, req.user.id);
-  const hostelId = room.hostel;
+  await assertOwnerCanManageHostel(room.hostel._id, req.user.id);
+  
+  const hostelId = room.hostel._id;
+  const hostelName = room.hostel.name;
+  const roomType = room.roomType;
+
   await room.deleteOne();
+
+  // LOG ACTIVITY
+  await logOwnerActivity({
+    ownerId: req.user.id,
+    actorId: req.user.id,
+    actorName: req.user.name,
+    actorRole: req.user.role,
+    eventType: 'room',
+    title: 'Room Deleted',
+    description: `Owner deleted ${roomType} room from ${hostelName}`,
+    metadata: {
+      roomId: req.params.id,
+      roomType,
+      hostelId,
+      hostelName
+    }
+  });
 
   // Sync hostel room counts
   const totalRoomsCount = await Room.countDocuments({ hostel: hostelId });
@@ -265,7 +333,7 @@ const deleteRoom = asyncHandler(async (req, res) => {
   });
 
   // INVALIDATE CACHE
-  cache.delete(`room_meta_${room._id}`);
+  cache.delete(`room_meta_${req.params.id}`);
   cache.delete(`hostel_details_${hostelId}`);
   cache.deleteMatching('hostels_search_');
 

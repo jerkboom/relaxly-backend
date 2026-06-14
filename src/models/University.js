@@ -28,6 +28,14 @@ const universitySchema = new mongoose.Schema(
       type: String,
       default: '',
     },
+
+    latitude: {
+      type: Number,
+    },
+
+    longitude: {
+      type: Number,
+    },
   },
   {
     timestamps: true,

@@ -46,6 +46,7 @@ const financeRoutes = require('./src/routes/financeRoutes');
 const payoutMethodRoutes = require('./src/routes/payoutMethodRoutes');
 const ownerOperationsRoutes = require('./src/routes/ownerOperationsRoutes');
 const payoutRoutes = require('./src/routes/payoutRoutes');
+const reportRoutes = require('./src/routes/reportRoutes');
 
 /* =========================================
    MIDDLEWARE
@@ -246,6 +247,7 @@ app.use('/payments', paymentRoutes);
 app.use('/api/receipts', receiptRoutes);
 app.use('/api/finance', financeRoutes);
 app.use('/api/payouts', payoutRoutes);
+app.use('/api/owner/reports', reportRoutes);
 app.use('/payouts', payoutRoutes); // Handle frontend calling without /api prefix
 
 /* =========================================

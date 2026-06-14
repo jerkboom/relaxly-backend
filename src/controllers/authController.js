@@ -4,6 +4,7 @@ const crypto = require('crypto');
 const asyncHandler = require('express-async-handler');
 
 const User = require('../models/User');
+const University = require('../models/University');
 const OwnerInviteCode = require('../models/OwnerInviteCode');
 const sendEmail = require('../utils/sendEmail');
 const { createNotification } = require('../services/notificationService');
@@ -19,7 +20,7 @@ const registerUser = asyncHandler(
       phone,
       role = 'student',
       accessCode, // Used for owners only
-      governmentIdUrl, university, studentId } = req.body;
+      governmentIdUrl, university, customUniversity, studentId } = req.body;
 
     // 1. HARD VALIDATION: Required Fields for everyone
     if (!name || !email || !password) {
@@ -40,7 +41,38 @@ const registerUser = asyncHandler(
       email: email.toLowerCase(),
       password,
       gender,
-      role: role === 'owner' ? 'owner' : 'student', }; if (role !== 'owner') { if (!university || !studentId) { res.status(400); throw new Error('Students must provide their University and Student ID Number.'); } userPayload.university = university; userPayload.studentId = studentId; } let inviteRecord = null;
+      phone,
+      role: role === 'owner' ? 'owner' : 'student',
+      agreedToPolicies: true,
+      agreedAt: new Date(),
+      policyVersion: 'v1.0',
+    }; if (role !== 'owner') {
+      if (!university || !studentId) {
+        res.status(400);
+        throw new Error('Students must provide their University and Student ID Number.');
+      }
+      
+      if (university !== 'other') {
+        // VALIDATION: Ensure the university exists in our database
+        const uniExists = await University.findById(university);
+        if (!uniExists) {
+          res.status(400);
+          throw new Error('The selected university is invalid or no longer exists. Please refresh and try again.');
+        }
+        userPayload.university = university;
+        userPayload.customUniversity = null;
+      } else {
+        // VALIDATION: Ensure custom university name is provided
+        if (!customUniversity || !customUniversity.trim()) {
+          res.status(400);
+          throw new Error('Please enter your university name.');
+        }
+        userPayload.university = null;
+        userPayload.customUniversity = customUniversity.trim();
+      }
+      
+      userPayload.studentId = studentId;
+    } let inviteRecord = null;
 
     if (userPayload.role === 'owner') {
       // SECURITY: Owners MUST have a valid invite code and ID

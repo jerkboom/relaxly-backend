@@ -21,6 +21,7 @@ const {
 } = require('../services/notificationService');
 
 const { sendSuccess, sendError } = require('../utils/responseHandler');
+const { logOwnerActivity } = require('../utils/ownerActivityLogger');
 
 const crypto = require('crypto');
 
@@ -42,6 +43,7 @@ const createBooking =
     const roomId = req.body.room || req.body.roomId || req.body.room_id || req.body.id || req.body._id;
     const checkInDate = req.body.checkInDate || req.body.check_in_date || req.body.date || req.body.checkIn || new Date().toISOString();
     const studentId = req.user.id;
+    const studentUser = await User.findById(studentId).populate('university', 'name').lean();
     const studentGender = req.user.gender;
 
     if (!roomId) return sendError(res, 'Room ID required.', 400);
@@ -150,6 +152,7 @@ const createBooking =
 
       const [newBooking] = await Booking.create([{
         student: studentId,
+        history: [{ event: 'BOOKING_CREATED', details: 'Student initiated booking request', actor: studentId }],
         room: roomId,
         hostel: roomData.hostel._id,
         bookingCode,
@@ -157,6 +160,11 @@ const createBooking =
         ...breakdown,
         checkInDate,
         expiresAt,
+        studentPhone: studentUser.phone,
+        studentIdCard: studentUser.studentId,
+        studentUniversity: studentUser.customUniversity || (studentUser.university ? studentUser.university.name : studentUser.schoolName),
+        refundPolicyAccepted: true,
+        refundPolicyAcceptedAt: new Date(),
       }], { session });
 
       await session.commitTransaction();
@@ -240,23 +248,40 @@ const getMyBookings =
         })
         .populate({
           path: 'hostel',
-          
           populate: {
             path: 'owner',
             select:
-              'name email phone',
+              'name email phone whatsapp profileImage',
           },
         })
         .sort({
           createdAt: -1,
-        });
+        })
+        .lean();
+
+    // ENRICH WITH GATED HOST CONTACT
+    const enrichedBookings = bookings.map(booking => {
+      const eligibleStatuses = ['approved', 'checked_in', 'completed'];
+      const isEligible = eligibleStatuses.includes(booking.bookingStatus);
+      const owner = booking.hostel?.owner;
+
+      return {
+        ...booking,
+        hostContact: isEligible && owner ? {
+          phone: owner.phone,
+          whatsapp: owner.whatsapp || owner.phone,
+          email: owner.email,
+          ownerName: owner.name
+        } : null
+      };
+    });
 
     res.status(200).json({
       success: true,
       message: 'Student bookings retrieved',
-      bookings,
-      results: bookings,
-      data: bookings
+      bookings: enrichedBookings,
+      results: enrichedBookings,
+      data: enrichedBookings
     });
   });
 
@@ -265,7 +290,7 @@ const getMyBookings =
 ========================================= */
 const getBookingById =
   asyncHandler(async (req, res) => {
-    const booking =
+    const bookingDoc =
       await Booking.findById(
         req.params.id
       )
@@ -280,29 +305,28 @@ const getBookingById =
         .populate('room', 'roomType price images description amenities')
         .populate({
           path: 'hostel',
-          
           populate: {
             path: 'owner',
             select:
-              'name email phone',
+              'name email phone whatsapp profileImage',
           },
         });
 
-    if (!booking) {
+    if (!bookingDoc) {
       return sendError(res, 'Booking not found', 404);
     }
 
     const isStudent =
-      booking.student._id.toString() ===
+      bookingDoc.student._id.toString() ===
       req.user.id;
 
     let isOwner = false;
 
     if (
-      booking.hostel?.owner?._id
+      bookingDoc.hostel?.owner?._id
     ) {
       isOwner =
-        booking.hostel.owner._id.toString() ===
+        bookingDoc.hostel.owner._id.toString() ===
         req.user.id;
     }
 
@@ -313,6 +337,22 @@ const getBookingById =
     ) {
       return sendError(res, 'Not authorized', 403);
     }
+
+    // ENRICH WITH GATED HOST CONTACT
+    const booking = bookingDoc.toObject();
+    const eligibleStatuses = ['approved', 'checked_in', 'completed'];
+    const isEligible = eligibleStatuses.includes(booking.bookingStatus);
+    const owner = booking.hostel?.owner;
+
+    booking.hostContact = (isStudent && isEligible && owner) ? {
+      phone: owner.phone,
+      whatsapp: owner.whatsapp || owner.phone,
+      email: owner.email,
+      ownerName: owner.name
+    } : null;
+
+    // For Admin/Owner, always provide full context if requested, 
+    // but here we align with the student-centric "My Stays" requirement.
 
     sendSuccess(res, booking, 'Booking details retrieved');
   });
@@ -328,10 +368,7 @@ const getBookings =
           'student',
           'name email'
         )
-        .populate(
-          'room',
-          'roomType price'
-        )
+        .populate('room', 'roomType price occupancyStyle')
         .populate(
           'hostel',
           'name location'
@@ -378,10 +415,7 @@ const getOwnerBookings =
             select: 'name'
           }
         })
-        .populate(
-          'room',
-          'roomType price'
-        )
+        .populate('room', 'roomType price occupancyStyle')
         .populate(
           'hostel',
           'name location'
@@ -486,12 +520,7 @@ const updateBookingStatus =
     const { status } =
       req.body;
 
-    if (
-      ![
-        'rejected',
-        'completed',
-      ].includes(status)
-    ) {
+    if (!['approved', 'rejected', 'completed'].includes(status)) {
       return sendError(res, 'Invalid booking status', 400);
     }
 
@@ -542,6 +571,32 @@ const updateBookingStatus =
 
     await booking.save();
 
+    // Populate for logging and response
+    await booking.populate([
+      { path: 'student', select: 'name email phone studentId university avatar' },
+      { path: 'room', select: 'roomType price occupancyStyle' },
+      { path: 'hostel', select: 'name location owner' }
+    ]);
+
+    // LOG OWNER ACTIVITY (Forensic)
+    if (req.user.role === 'owner' || req.user.role === 'admin' || req.admin) {
+      await logOwnerActivity({
+        ownerId: booking.hostel.owner,
+        actorId: req.user.id,
+        actorName: req.user.name,
+        actorRole: req.user.role,
+        eventType: 'booking',
+        title: `Booking ${status.charAt(0).toUpperCase() + status.slice(1)}`,
+        description: `Owner ${status} booking for ${booking.student.name}`,
+        metadata: {
+          bookingId: booking._id,
+          studentId: booking.student._id,
+          status: status,
+          hostelName: booking.hostel.name
+        }
+      });
+    }
+
     logLifecycleEvent('booking_status_updated', {
       bookingId: booking._id.toString(),
       roomId: booking.room.toString(),
@@ -575,7 +630,15 @@ const updateBookingStatus =
       },
     });
 
-    sendSuccess(res, booking, 'Booking status updated successfully');
+    
+      // Populate before sending response
+      await booking.populate([
+        { path: 'student', select: 'name email phone studentId university avatar' },
+        { path: 'room', select: 'roomType price occupancyStyle' },
+        { path: 'hostel', select: 'name location' }
+      ]);
+      
+      sendSuccess(res, booking, 'Booking status updated successfully');
   });
 
 
@@ -584,25 +647,40 @@ const updateBookingStatus =
 ========================================= */
 const checkInStudent =
   asyncHandler(async (req, res) => {
+    console.log("--- CHECK-IN CONTROLLER RECEIVED PAYLOAD ---", req.body);
     const booking =
       await Booking.findById(
         req.params.id
       ).populate({
         path: 'hostel',
-        select: 'owner'
+        select: 'owner name'
       });
 
     if (!booking) {
       return sendError(res, 'Booking not found', 404);
     }
 
+    console.log("--- BOOKING BEFORE UPDATE ---", {
+        id: booking._id,
+        status: booking.bookingStatus,
+        room: booking.assignedRoomNumber,
+        checkedIn: booking.checkedIn
+    });
+
     // Authorization: Must be owner of the hostel
     if (booking.hostel.owner.toString() !== req.user.id && req.user.role !== 'admin') {
       return sendError(res, 'Not authorized to check-in this student', 403);
     }
 
-    // Business Logic: Must be paid and approved
-    if (booking.paymentStatus !== 'paid' || booking.bookingStatus !== 'approved') {
+    // Business Logic: Must be paid and approved (or already marked completed)
+    console.log("CHECK-IN VALIDATION", {
+        id: booking._id,
+        bookingStatus: booking.bookingStatus,
+        paymentStatus: booking.paymentStatus
+    });
+
+    const eligibleStatuses = ['approved', 'completed'];
+    if (booking.paymentStatus !== 'paid' || !eligibleStatuses.includes(booking.bookingStatus)) {
       return sendError(res, 'Only paid and approved bookings can be checked-in', 400);
     }
 
@@ -610,13 +688,116 @@ const checkInStudent =
       return sendError(res, 'Student already checked-in', 400);
     }
 
-    // Update check-in state
+    // INPUT NORMALIZATION: Handle both 'assignedRoomNumber' and 'roomNumber', etc.
+    const assignedRoomNumber = req.body.assignedRoomNumber || req.body.roomNumber || req.body.room;
+    const assignedBedNumber = req.body.assignedBedNumber || req.body.bedNumber || req.body.bed;
+    const assignedFloorNumber = req.body.assignedFloorNumber || req.body.floorNumber || req.body.floor;
+    const assignedBlock = req.body.assignedBlock || req.body.block;
+    const occupancyNotes = req.body.occupancyNotes || req.body.notes;
+
+    if (!assignedRoomNumber) {
+      return sendError(res, 'Room number is required for check-in', 400);
+    }
+
+    // OCCUPANCY PROTECTION: Prevent assigning same Room + Bed combination
+      const existingOccupant = await Booking.findOne({
+        assignedRoomNumber,
+        assignedBedNumber,
+        bookingStatus: 'checked_in',
+        hostel: booking.hostel._id
+      });
+
+      if (existingOccupant) {
+        return sendError(res, `Occupancy Conflict: Room ${assignedRoomNumber}, Bed ${assignedBedNumber} is already occupied by ${existingOccupant.assignedBy ? existingOccupant.assignedBy : 'another student'}.`, 400);
+      }
+
+    // 1. Physical Occupancy Data
     booking.checkedIn = true;
     booking.checkedInAt = new Date();
     booking.checkedInBy = req.user.id;
-    booking.bookingStatus = 'completed'; // Auto-complete upon check-in
+    booking.checkedInByModel = req.user.role === 'admin' || req.admin ? 'Admin' : 'User';
+    
+    // Determine if this is the first-time assignment or an update
+    const isFirstAssignment = !booking.assignedRoomNumber;
+    const assignmentTitle = isFirstAssignment ? 'Room Assigned' : 'Room Assignment Updated';
+
+    // 2. Room Assignment Metadata
+    booking.assignedRoomNumber = assignedRoomNumber;
+    booking.assignedBedNumber = assignedBedNumber;
+    booking.assignedFloorNumber = assignedFloorNumber;
+    booking.assignedBlock = assignedBlock;
+    booking.occupancyNotes = occupancyNotes;
+    
+    // 3. Assignment Attribution
+    booking.assignedBy = req.user.name;
+    booking.assignedById = req.user.id;
+    booking.assignedByModel = req.user.role === 'admin' || req.admin ? 'Admin' : 'User';
+    booking.assignedAt = new Date();
+
+    booking.history.push(
+      { 
+        event: 'ROOM_ASSIGNED', 
+        details: `${assignmentTitle}: Room ${assignedRoomNumber} ${assignedBedNumber ? 'Bed ' + assignedBedNumber : ''} on Floor ${assignedFloorNumber || 'N/A'}`, 
+        actor: req.user.id 
+      },
+      { event: 'CHECKED_IN', details: 'Student successfully checked into the hostel', actor: req.user.id }
+    );
+    booking.bookingStatus = 'checked_in';
+
+    console.log("--- BOOKING AFTER UPDATE (PRE-SAVE) ---", {
+        id: booking._id,
+        room: booking.assignedRoomNumber,
+        bed: booking.assignedBedNumber,
+        floor: booking.assignedFloorNumber,
+        block: booking.assignedBlock,
+        assignedBy: booking.assignedBy
+    });
 
     await booking.save();
+    
+    // IMMEDIATELY RE-FETCH FROM DB FOR PROOF OF PERSISTENCE
+    const savedBooking = await Booking.findById(booking._id).lean();
+    console.log("CHECK-IN SAVED", savedBooking);
+
+    // LOG OWNER ACTIVITY
+    await logOwnerActivity({
+      ownerId: booking.hostel.owner,
+      actorId: req.user.id,
+      actorName: req.user.name,
+      actorRole: req.user.role,
+      eventType: 'residency',
+      title: assignmentTitle,
+      description: `Owner ${isFirstAssignment ? 'assigned' : 'updated assignment for'} ${booking.student.name} into Room ${booking.assignedRoomNumber}`,
+      metadata: {
+        bookingId: booking._id,
+        studentId: booking.student._id,
+        studentName: booking.student.name,
+        hostelName: booking.hostel.name,
+        roomNumber: booking.assignedRoomNumber,
+        bedNumber: booking.assignedBedNumber,
+        floorNumber: booking.assignedFloorNumber,
+        block: booking.assignedBlock,
+        assignedBy: req.user.name
+      }
+    });
+
+    // Also log the Check-In itself
+    await logOwnerActivity({
+      ownerId: booking.hostel.owner,
+      actorId: req.user.id,
+      actorName: req.user.name,
+      actorRole: req.user.role,
+      eventType: 'residency',
+      title: 'Student Checked In',
+      description: `Owner checked in ${booking.student.name} into Room ${booking.assignedRoomNumber}`,
+      metadata: {
+        bookingId: booking._id,
+        studentId: booking.student._id,
+        studentName: booking.student.name,
+        hostelName: booking.hostel.name,
+        roomNumber: booking.assignedRoomNumber
+      }
+    });
 
     logLifecycleEvent('student_checked_in', {
       bookingId: booking._id.toString(),
@@ -632,7 +813,7 @@ const checkInStudent =
       type: 'booking',
       data: {
         booking: booking._id,
-        status: 'checked-in'
+        status: 'checked_in'
       }
     });
 
@@ -762,8 +943,179 @@ const checkInStudent =
       console.error('[CHECKIN_NOTIFICATION_ERROR]', error.message);
     }
 
-sendSuccess(res, booking, 'Student checked-in successfully');
+
+    // Populate before sending response to ensure frontend state remains rich
+    await booking.populate([
+      { path: 'student', select: 'name email phone studentId university avatar' },
+      { path: 'room', select: 'roomType price occupancyStyle' }
+    ]);
+    
+    sendSuccess(res, booking, 'Student checked-in successfully');
   });
+
+
+/* =========================================
+   UPDATE ROOM ASSIGNMENT
+========================================= */
+const updateRoomAssignment = asyncHandler(async (req, res) => {
+  console.log("--- UPDATE ROOM ASSIGNMENT RECEIVED PAYLOAD ---", req.body);
+  
+  // INPUT NORMALIZATION
+  const assignedRoomNumber = req.body.assignedRoomNumber || req.body.roomNumber || req.body.room;
+  const assignedBedNumber = req.body.assignedBedNumber || req.body.bedNumber || req.body.bed;
+  const assignedFloorNumber = req.body.assignedFloorNumber || req.body.floorNumber || req.body.floor;
+  const assignedBlock = req.body.assignedBlock || req.body.block;
+  const occupancyNotes = req.body.occupancyNotes || req.body.notes;
+
+  const booking = await Booking.findById(req.params.id).populate('hostel', 'owner name');
+
+  if (!booking) return sendError(res, 'Booking not found', 404);
+  
+  console.log("--- BOOKING BEFORE UPDATE ---", {
+      id: booking._id,
+      room: booking.assignedRoomNumber,
+      floor: booking.assignedFloorNumber
+  });
+
+  if (booking.hostel.owner.toString() !== req.user.id && req.user.role !== 'admin') {
+    return sendError(res, 'Not authorized to update room assignment', 403);
+  }
+
+  const oldRoom = booking.assignedRoomNumber;
+  const oldFloor = booking.assignedFloorNumber;
+  
+  // Determine if this is the first-time assignment or an update
+  const isFirstAssignment = !oldRoom;
+  const assignmentTitle = isFirstAssignment ? 'Room Assigned' : 'Room Assignment Updated';
+
+  // 1. Physical Occupancy Data
+  booking.assignedRoomNumber = assignedRoomNumber || booking.assignedRoomNumber;
+  booking.assignedBedNumber = assignedBedNumber || booking.assignedBedNumber;
+  booking.assignedFloorNumber = assignedFloorNumber || booking.assignedFloorNumber;
+  booking.assignedBlock = assignedBlock || booking.assignedBlock;
+  booking.occupancyNotes = occupancyNotes || booking.occupancyNotes;
+
+  // 2. Assignment Attribution
+  booking.assignedBy = req.user.name;
+  booking.assignedById = req.user.id;
+  booking.assignedByModel = req.user.role === 'admin' || req.admin ? 'Admin' : 'User';
+  booking.assignedAt = new Date();
+
+  booking.history.push({
+    event: 'ROOM_ASSIGNMENT_UPDATED',
+    details: `${assignmentTitle}: Room ${oldRoom || 'N/A'} (Floor ${oldFloor || 'N/A'}) -> Room ${booking.assignedRoomNumber} (Floor ${booking.assignedFloorNumber || 'N/A'})`,
+    actor: req.user.id
+  });
+
+  console.log("--- BOOKING AFTER UPDATE (PRE-SAVE) ---", {
+      id: booking._id,
+      room: booking.assignedRoomNumber,
+      bed: booking.assignedBedNumber,
+      assignedBy: booking.assignedBy
+  });
+
+  await booking.save();
+  
+  console.log("--- BOOKING SAVED (PROOF OF PERSISTENCE) ---");
+  console.log({
+    assignedRoomNumber: booking.assignedRoomNumber,
+    assignedBedNumber: booking.assignedBedNumber,
+    assignedFloorNumber: booking.assignedFloorNumber,
+    assignedBlock: booking.assignedBlock
+  });
+
+  // LOG OWNER ACTIVITY
+  await logOwnerActivity({
+    ownerId: booking.hostel.owner,
+    actorId: req.user.id,
+    actorName: req.user.name,
+    actorRole: req.user.role,
+    eventType: 'residency',
+    title: assignmentTitle,
+    description: `Owner ${isFirstAssignment ? 'assigned' : 'updated assignment for'} ${booking.student?.name || 'student'} to Room ${booking.assignedRoomNumber}`,
+    metadata: {
+      bookingId: booking._id,
+      studentId: booking.student?._id,
+      hostelName: booking.hostel?.name,
+      roomNumber: booking.assignedRoomNumber,
+      bedNumber: booking.assignedBedNumber,
+      floorNumber: booking.assignedFloorNumber,
+      block: booking.assignedBlock,
+      assignedBy: req.user.name
+    }
+  });
+  
+  
+    // Populate before sending response
+    await booking.populate([
+      { path: 'student', select: 'name email phone studentId university avatar' },
+      { path: 'room', select: 'roomType price occupancyStyle' }
+    ]);
+    
+    sendSuccess(res, booking, 'Room assignment updated successfully');
+});
+
+
+/* =========================================
+   CHECK-OUT STUDENT
+========================================= */
+const checkOutStudent = asyncHandler(async (req, res) => {
+  const booking = await Booking.findById(req.params.id).populate('hostel', 'owner');
+
+  if (!booking) return sendError(res, 'Booking not found', 404);
+  
+  if (booking.hostel.owner.toString() !== req.user.id && req.user.role !== 'admin') {
+    return sendError(res, 'Not authorized to check-out this student', 403);
+  }
+
+  if (booking.bookingStatus !== 'checked_in' && booking.bookingStatus !== 'completed') {
+    return sendError(res, 'Student is not in a status that allows check-out', 400);
+  }
+
+  if (booking.bookingStatus === 'completed' && !booking.checkedIn) {
+    return sendSuccess(res, booking, 'Student is already checked out');
+  }
+
+  booking.bookingStatus = 'completed';
+  booking.checkedIn = false;
+  booking.checkedOutAt = new Date();
+  booking.checkedOutBy = req.user.id;
+
+  booking.history.push({
+    event: 'CHECKED_OUT',
+    details: `Student checked out from Room ${booking.assignedRoomNumber}`,
+    actor: req.user.id
+  });
+
+  await booking.save();
+
+  // LOG OWNER ACTIVITY
+  await logOwnerActivity({
+    ownerId: booking.hostel.owner,
+    actorId: req.user.id,
+    actorName: req.user.name,
+    actorRole: req.user.role,
+    eventType: 'residency',
+    title: 'Student Checked Out',
+    description: `Owner checked out ${booking.student?.name || 'student'} from Room ${booking.assignedRoomNumber}`,
+    metadata: {
+      bookingId: booking._id,
+      studentId: booking.student?._id,
+      studentName: booking.student?.name,
+      hostelName: booking.hostel?.name,
+      roomNumber: booking.assignedRoomNumber,
+      checkedOutBy: req.user.name
+    }
+  });
+
+  // Populate before sending response to ensure frontend state remains rich
+  await booking.populate([
+    { path: 'student', select: 'name email phone studentId university avatar' },
+    { path: 'room', select: 'roomType price occupancyStyle' }
+  ]);
+  
+  sendSuccess(res, booking, 'Student checked out successfully');
+});
 
 module.exports = {
   createBooking,
@@ -774,6 +1126,8 @@ module.exports = {
   cancelBooking,
   updateBookingStatus,
   checkInStudent,
+  updateRoomAssignment,
+  checkOutStudent,
 };
 
 

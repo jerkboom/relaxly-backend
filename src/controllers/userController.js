@@ -68,6 +68,8 @@ const updateProfile =
       if (user.role === 'student') {
         user.schoolName = req.body.schoolName || user.schoolName;
         user.studentId = req.body.studentId || user.studentId;
+        user.university = req.body.university || user.university;
+        user.customUniversity = req.body.customUniversity !== undefined ? req.body.customUniversity : user.customUniversity;
       }
 
       if (user.role === 'owner') {

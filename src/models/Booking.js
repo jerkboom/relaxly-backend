@@ -59,15 +59,75 @@ const bookingSchema = new mongoose.Schema(
     bookingStatus: {
       type: String,
       enum: [
-        'pending',
-        'approved',
-        'cancelled',
-        'completed', 'checked-in',
+        'pending', 'approved', 'cancelled', 'completed', 'checked_in',
         'rejected',
         'expired',
       ],
       default: 'pending',
     },
+
+    /**
+     * STUDENT VERIFICATION SNAPSHOT
+     * Data preserved at time of booking.
+     */
+    studentPhone: String,
+    studentIdCard: String,
+    studentUniversity: String,
+
+    /**
+     * ROOM ASSIGNMENT & OCCUPANCY
+     */
+    assignedRoomNumber: String,
+    assignedBedNumber: String,
+    assignedFloorNumber: String,
+    assignedBlock: String,
+    occupancyNotes: String,
+    
+    assignedBy: String,
+    assignedById: {
+      type: mongoose.Schema.Types.ObjectId,
+      refPath: 'assignedByModel',
+    },
+    assignedByModel: {
+      type: String,
+      enum: ['User', 'Admin'],
+    },
+    assignedAt: Date,
+
+    checkedIn: {
+      type: Boolean,
+      default: false,
+    },
+    checkedInAt: {
+      type: Date,
+    },
+    checkedInBy: {
+      type: mongoose.Schema.Types.ObjectId,
+      refPath: 'checkedInByModel',
+    },
+    checkedInByModel: {
+      type: String,
+      enum: ['User', 'Admin'],
+      default: 'User',
+    },
+
+    /**
+     * BOOKING HISTORY & TIMELINE
+     */
+    history: [
+      {
+        event: String,
+        details: String,
+        actor: {
+          type: mongoose.Schema.Types.ObjectId,
+          ref: 'User',
+        },
+        timestamp: {
+          type: Date,
+          default: Date.now,
+        },
+      }
+    ],
 
     // Payment lifecycle status
     paymentStatus: {

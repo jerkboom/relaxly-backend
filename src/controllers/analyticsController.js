@@ -10,7 +10,48 @@ const getAdminAnalytics = asyncHandler(async (req, res) => {
 });
 
 const getAdminDashboardStats = asyncHandler(async (req, res) => {
-  res.status(200).json({ success: true, data: {} });
+  const User = require('../models/User');
+  const Booking = require('../models/Booking');
+  const Hostel = require('../models/Hostel');
+  const Room = require('../models/Room');
+
+  const totalStudents = await User.countDocuments({ role: 'student' });
+  const totalOwners = await User.countDocuments({ role: 'owner' });
+  const totalHostels = await Hostel.countDocuments();
+  
+  // Occupancy Analytics
+  const checkedInBookings = await Booking.find({ bookingStatus: 'checked_in' });
+  const studentsCheckedIn = checkedInBookings.length;
+  
+  // Active/Approved but not checked in
+  const pendingArrivals = await Booking.countDocuments({ 
+    bookingStatus: 'approved', 
+    paymentStatus: 'paid',
+    checkedIn: { $ne: true }
+  });
+
+  const totalRooms = await Room.countDocuments();
+  const occupiedRoomNumbers = new Set(checkedInBookings.map(b => b.assignedRoomNumber).filter(Boolean));
+  const occupiedRoomsCount = occupiedRoomNumbers.size;
+
+  const stats = {
+    totalStudents,
+    totalOwners,
+    totalHostels,
+    occupancy: {
+      studentsCheckedIn,
+      pendingArrivals,
+      occupiedRoomsCount,
+      totalRooms,
+      vacantRoomsCount: Math.max(0, totalRooms - occupiedRoomsCount)
+    },
+    system: {
+      platformFee: 5.00, // Static for now
+      activeSessions: 12 // Mock
+    }
+  };
+
+  res.status(200).json({ success: true, data: stats });
 });
 
 const trackEvent = asyncHandler(async (req, res) => {

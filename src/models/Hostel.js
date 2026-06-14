@@ -14,8 +14,24 @@ const hostelSchema = new mongoose.Schema(
     },
 
     location: {
-      type: String,
-      required: true,
+      address: {
+        type: String,
+        required: true,
+      },
+      city: {
+        type: String,
+        default: '',
+      },
+      region: {
+        type: String,
+        default: '',
+      },
+      latitude: {
+        type: Number,
+      },
+      longitude: {
+        type: Number,
+      },
     },
 
     price: {
@@ -125,8 +141,29 @@ const hostelSchema = new mongoose.Schema(
   },
   {
     timestamps: true,
+    toJSON: { virtuals: true },
+    toObject: { virtuals: true },
   }
 );
+
+// GLOBAL DATA TRANSFORMATION: Prevent React from crashing when rendering location object
+const transformLocation = (doc, ret) => {
+  if (ret.location && typeof ret.location === 'object') {
+    // Preserve full details
+    ret.locationDetails = JSON.parse(JSON.stringify(ret.location));
+    
+    // Expose root level coordinates for Maps
+    ret.latitude = ret.location.latitude;
+    ret.longitude = ret.location.longitude;
+    
+    // Flatten primary location field to String to prevent React child error
+    ret.location = ret.location.address || '';
+  }
+  return ret;
+};
+
+hostelSchema.set('toJSON', { transform: transformLocation, virtuals: true });
+hostelSchema.set('toObject', { transform: transformLocation, virtuals: true });
 
 // INDEXES FOR SEARCH & MODERATION
 hostelSchema.index({ verificationStatus: 1, available: 1 });

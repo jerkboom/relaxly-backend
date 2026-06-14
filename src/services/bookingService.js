@@ -196,11 +196,16 @@ const markBookingAsPaid = async (bookingId, adminId, paymentMethod = 'manual_adm
 
   // 4. Payout Queue Entry
   const payoutMethod = await PayoutMethod.findOne({ owner: booking.hostel.owner });
-  await PayoutQueue.create({
+    await PayoutQueue.create({
     booking: booking._id,
     owner: booking.hostel.owner,
     hostel: booking.hostel._id,
     payoutMethod: payoutMethod?._id,
+    transferMethod: payoutMethod?.type,
+    provider: payoutMethod?.provider,
+    bankName: payoutMethod?.bankName || payoutMethod?.provider,
+    accountNumber: payoutMethod?.accountNumber,
+    accountName: payoutMethod?.accountName,
     amount: booking.ownerAmount,
     commissionAmount: booking.adminCommission,
     paystackFee: 0,

@@ -162,6 +162,7 @@ const updateUserRole = asyncHandler(async (req, res) => {
 
 const getUserDetails = asyncHandler(async (req, res) => {
   const details = await adminUserService.getUserDetails(req.params.id);
+
   sendSuccess(res, details);
 });
 
@@ -293,7 +294,8 @@ const getAllHostelsForAdmin = asyncHandler(async (req, res) => {
 });
 
 const getAllStudentsForAdmin = asyncHandler(async (req, res) => {
-  const students = await adminUserService.getStudentsForAdmin();
+  const { search } = req.query;
+  const students = await adminUserService.getStudentsForAdmin(search);
   sendSuccess(res, students);
 });
 
@@ -681,6 +683,26 @@ const getCacheStats = asyncHandler(async (req, res) => {
   sendSuccess(res, stats, 'Cache statistics retrieved');
 });
 
+const ownerTimelineService = require('../services/ownerTimelineService');
+
+/**
+ * @desc    Get aggregated activity timeline for a specific owner
+ * @route   GET /api/admin/owners/:id/timeline
+ * @access  Private/Admin
+ */
+const getOwnerTimeline = asyncHandler(async (req, res) => {
+  const { id } = req.params;
+  const { page, limit } = req.query;
+
+  const timeline = await ownerTimelineService.getOwnerTimeline(
+    id,
+    page ? parseInt(page) : 1,
+    limit ? parseInt(limit) : 20
+  );
+
+  sendSuccess(res, timeline, 'Owner activity timeline retrieved successfully');
+});
+
 module.exports = {
   getPlatformSettings,
   updatePlatformSettings,
@@ -741,5 +763,6 @@ module.exports = {
   getFraudMonitoring,
   getLiveActivityFeed,
   getCacheStats,
-  getCustomUniversities
+  getCustomUniversities,
+  getOwnerTimeline
 };
