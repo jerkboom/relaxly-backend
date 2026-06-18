@@ -2,6 +2,8 @@ const Booking = require('../models/Booking');
 const Hostel = require('../models/Hostel');
 const Room = require('../models/Room');
 const User = require('../models/User');
+const cache = require('./cache');
+const { invalidateHostelBrowseCaches } = require('./hostelCache');
 
 const ACTIVE_BOOKING_STATUSES = ['pending', 'approved'];
 const ACTIVE_PAYMENT_STATUSES = ['pending', 'paid'];
@@ -44,7 +46,12 @@ const syncHostelAvailability = async (hostelId) => {
     roomStatus: 'available',
   });
 
-  await Hostel.findByIdAndUpdate(hostelId, { availableRooms });
+  const hostel = await Hostel.findByIdAndUpdate(
+    hostelId,
+    { availableRooms },
+    { new: true }
+  ).select('_id nearestUniversity nearbyUniversities');
+  invalidateHostelBrowseCaches(hostel);
   return availableRooms;
 };
 

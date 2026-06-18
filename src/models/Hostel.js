@@ -91,6 +91,11 @@ const hostelSchema = new mongoose.Schema(
       ref: 'University',
       required: false,
     },
+    nearestUniversity: {
+      type: String,
+      trim: true,
+      default: '',
+    },
 
     nearbyUniversities: {
       type: [String],
@@ -138,6 +143,10 @@ const hostelSchema = new mongoose.Schema(
     suspensionReason: {
       type: String,
     },
+    timesSaved: {
+      type: Number,
+      default: 0,
+    },
   },
   {
     timestamps: true,
@@ -168,6 +177,16 @@ hostelSchema.set('toObject', { transform: transformLocation, virtuals: true });
 // INDEXES FOR SEARCH & MODERATION
 hostelSchema.index({ verificationStatus: 1, available: 1 });
 hostelSchema.index({ owner: 1, verificationStatus: 1 });
+hostelSchema.index({ university: 1 });
+hostelSchema.index({ 'location.city': 1 });
+hostelSchema.index({ nearestUniversity: 1 });
+hostelSchema.index({ nearbyUniversities: 1 });
+hostelSchema.index({ 'nearestInstitution.name': 1 });
+hostelSchema.index({ amenities: 1 });
+hostelSchema.index({ createdAt: -1 });
+hostelSchema.index({ verificationStatus: 1, available: 1, nearestUniversity: 1, createdAt: -1 });
+hostelSchema.index({ verificationStatus: 1, available: 1, 'location.city': 1, createdAt: -1 });
+hostelSchema.index({ verificationStatus: 1, available: 1, amenities: 1, createdAt: -1 });
 
 // REFERENTIAL INTEGRITY VALIDATION
 hostelSchema.pre('save', async function() {

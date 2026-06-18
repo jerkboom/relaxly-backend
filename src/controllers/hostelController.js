@@ -5,13 +5,44 @@ const Hostel = require('../models/Hostel');
 const Room = require('../models/Room');
 const { sendSuccess, sendError } = require('../utils/responseHandler');
 const cache = require('../utils/cache');
+const {
+  HOSTEL_COUNT_PREFIX,
+  invalidateHostelBrowseCaches,
+} = require('../utils/hostelCache');
 const { logOwnerActivity } = require('../utils/ownerActivityLogger');
 const { calculateDistance, estimateWalkingTime } = require('../utils/distanceUtils');
+const { normalizeUniversity, getUniversityAliases } = require('../utils/universityUtils');
+
+
+const transformHostelResponse = (hostel) => {
+  if (!hostel) return null;
+  
+  const h = { ...hostel };
+  
+  // Ensure title and image fallbacks
+  h.title = h.title || h.name;
+  h.image = h.image || h.featuredImage || (h.images && h.images.length > 0 ? h.images[0] : null);
+
+  // Robust Location Transformation
+  if (h.location && typeof h.location === 'object') {
+    // Preserve full details in locationDetails
+    h.locationDetails = JSON.parse(JSON.stringify(h.location));
+    
+    // Expose root level coordinates
+    h.latitude = h.location.latitude;
+    h.longitude = h.location.longitude;
+
+    // Flatten primary location field to String (Backward Compatibility & React safety)
+    h.location = h.location.address || '';
+  }
+
+  return h;
+};
 
 const pickHostelFields = (body) => {
   const allowedFields = [
     'name', 'description', 'location', 'price', 'pricingType', 'images', 'featuredImage',
-    'amenities', 'rules', 'policies', 'university', 'nearbyUniversities', 'available',
+    'amenities', 'rules', 'policies', 'university', 'nearestUniversity', 'nearbyUniversities', 'available',
     'wifi', 'ac', 'security', 'water', 'electricity', 'totalRooms', 'availableRooms', 'genderAllowed',
   ];
   const update = {};
@@ -47,6 +78,22 @@ const pickHostelFields = (body) => {
 // CREATE HOSTEL
 const createHostel = asyncHandler(async (req, res) => {
   const data = pickHostelFields(req.body);
+  // UNIVERSITY VALIDATION: 1 Primary + Max 4 Nearby (Total 5)
+  if (!data.nearestUniversity) {
+    return sendError(res, 'Primary University is required', 400);
+  }
+
+  if (data.nearbyUniversities) {
+    // Remove duplicates and ensure primary isn't in nearby
+    data.nearbyUniversities = [...new Set(data.nearbyUniversities)]
+      .filter(u => u !== data.nearestUniversity)
+      .slice(0, 4);
+    
+    if (data.nearbyUniversities.length > 4) {
+      return sendError(res, 'You can select a maximum of 4 nearby universities.', 400);
+    }
+  }
+
   
   console.log('[DEBUG] Creating Hostel with data:', JSON.stringify(data, null, 2));
 
@@ -73,221 +120,254 @@ const createHostel = asyncHandler(async (req, res) => {
     }
   });
 
-  // INVALIDATE SEARCH CACHE
-  cache.deleteMatching('hostels_search_');
+  invalidateHostelBrowseCaches(hostel);
 
   sendSuccess(res, hostel, 'Hostel created successfully', 201);
 });
 
 // GET ALL HOSTELS WITH SEARCH, FILTERING, SORTING & PAGINATION
 const getHostels = asyncHandler(async (req, res) => {
-  // CACHE CHECK: Sort keys to ensure deterministic key generation
-  const sortedQuery = Object.keys(req.query)
-    .sort()
-    .reduce((acc, key) => {
-      acc[key] = req.query[key];
-      return acc;
-    }, {});
+  try {
+    console.log('HOSTEL QUERY PARAMS:', req.query);
 
-  const cacheKey = `hostels_search_${JSON.stringify(sortedQuery)}`;
-  const cached = cache.get(cacheKey);
-  if (cached) {
-    return sendSuccess(res, cached, 'Hostels retrieved from cache');
-  }
+    const {
+      search,
+      location,
+      university,
+      minPrice,
+      maxPrice,
+      amenities,
+      roomTypes,
+      gender,
+      verified,
+      availableNow,
+      roomCapacity,
+      sort,
+      page = 1,
+      limit = 12,
+    } = req.query;
 
-  console.log('HOSTEL QUERY PARAMS:', req.query);
+    // FILTER OBJECT - Start with public-safe defaults
+    let filter = {
+      verificationStatus: 'approved',
+      available: true,
+    };
 
-  const {
-    search,
-    location,
-    university,
-    minPrice,
-    maxPrice,
-    amenities,
-    roomTypes,
-    gender,
-    verified,
-    availableNow,
-    sort,
-    page = 1,
-    limit = 12, // Default to 12 for grid
-  } = req.query;
+    const isInvalid = (val) => !val || val === 'undefined' || val === 'null' || val === 'all' || val === '';
 
-  // FILTER OBJECT - Start with public-safe defaults
-  let filter = {
-    verificationStatus: 'approved',
-    available: true,
-  };
+    // Use an array to collect complex conditions that will be combined with $and
+    const conditions = [];
 
-  const isInvalid = (val) => !val || val === 'undefined' || val === 'null' || val === 'all' || val === '';
+    // 1. General Search Filter & University Alias Matching
+    if (!isInvalid(search)) {
+      const searchTerms = [search];
+      const aliases = getUniversityAliases(search);
+      if (aliases.length > 0) searchTerms.push(...aliases);
 
-  // Use an array to collect complex conditions that will be combined with $and
-  const conditions = [];
-
-  // 1. General Search Filter (name, location, description, nearbyUniversities)
-  if (!isInvalid(search)) {
-    const searchRegex = { $regex: String(search), $options: 'i' };
-    conditions.push({
-      $or: [
-        { name: searchRegex },
-        { 'location.address': searchRegex },
-        { 'location.city': searchRegex },
-        { 'location.region': searchRegex },
-        { location: searchRegex }, // Support for legacy string location
-        { description: searchRegex },
-        { nearbyUniversities: searchRegex }
-      ]
-    });
-  }
-
-  // 2. Location filter
-  if (!isInvalid(location)) {
-    const locationRegex = { $regex: String(location), $options: 'i' };
-    conditions.push({
-      $or: [
-        { 'location.address': locationRegex },
-        { 'location.city': locationRegex },
-        { 'location.region': locationRegex },
-        { location: locationRegex }, // Legacy support
-        { name: locationRegex } // Fallback to name
-      ]
-    });
-  }
-
-  // 3. University filter
-  if (!isInvalid(university)) {
-    const isObjectId = mongoose.Types.ObjectId.isValid(university);
-    if (isObjectId) {
-      conditions.push({
-        $or: [
-          { university: university },
-          { nearbyUniversities: { $regex: String(university), $options: 'i' } },
-        ]
-      });
-    } else {
-      const universityRegex = { $regex: String(university), $options: 'i' };
-      conditions.push({
-        $or: [
-          { nearbyUniversities: universityRegex },
-          { name: universityRegex }
-        ]
-      });
-    }
-  }
-
-  // Combine conditions into the main filter using $and
-  if (conditions.length > 0) {
-    filter.$and = conditions;
-  }
-
-  // Price filter
-  if (!isInvalid(minPrice) || !isInvalid(maxPrice)) {
-    filter.price = {};
-    if (!isInvalid(minPrice)) filter.price.$gte = Number(minPrice);
-    if (!isInvalid(maxPrice)) filter.price.$lte = Number(maxPrice);
-  }
-
-  // Gender filter
-  if (!isInvalid(gender) && gender !== 'Mixed') {
-    filter.genderAllowed = gender;
-  }
-
-  // Verified filter
-  if (verified === 'true') {
-    filter.isVerified = true;
-  }
-
-  // Available now
-  if (availableNow === 'true') {
-    filter.availableRooms = { $gt: 0 };
-  }
-
-  // Amenities filter
-  if (!isInvalid(amenities)) {
-    const amenitiesArray = Array.isArray(amenities) ? amenities : String(amenities).split(',').map(a => a.trim());
-    const validAmenities = amenitiesArray.filter(a => a !== '');
-    
-    if (validAmenities.length > 0) {
       const orConditions = [];
-      validAmenities.forEach(a => {
-        const lower = a.toLowerCase();
-        if (lower === 'wifi') orConditions.push({ wifi: true });
-        else if (lower === 'ac' || lower === 'air conditioning') orConditions.push({ ac: true });
-        else if (lower === 'security') orConditions.push({ security: true });
-        else orConditions.push({ amenities: { $in: [a] } });
+      searchTerms.forEach(term => {
+        const regex = { $regex: String(term), $options: 'i' };
+        orConditions.push(
+          { name: regex },
+          { nearestUniversity: regex },
+          { nearbyUniversities: regex },
+          { 'location.address': regex },
+          { 'location.city': regex },
+          { 'location.region': regex },
+          { description: regex }
+        );
       });
 
-      if (orConditions.length > 0) {
-        if (!filter.$and) filter.$and = [];
-        filter.$and.push({ $or: orConditions });
+      conditions.push({ $or: orConditions });
+    }
+
+    // 2. Location filter (acts as specialized search)
+    if (!isInvalid(location)) {
+      const locationAliases = getUniversityAliases(location);
+      const locTerms = [location, ...locationAliases];
+
+      const orConditions = [];
+      locTerms.forEach(term => {
+        const regex = { $regex: String(term), $options: 'i' };
+        orConditions.push(
+          { 'location.address': regex },
+          { 'location.city': regex },
+          { 'location.region': regex },
+          { nearestUniversity: regex },
+          { nearbyUniversities: regex }
+        );
+      });
+      conditions.push({ $or: orConditions });
+    }
+
+    // 3. University filter (explicit selection)
+    if (!isInvalid(university)) {
+      const normalized = normalizeUniversity(university);
+      const aliases = getUniversityAliases(normalized);
+      const uniTerms = [...new Set([university, normalized, ...aliases])];
+
+      const orConditions = uniTerms.map(term => ({
+        $or: [
+          { nearestUniversity: { $regex: String(term), $options: 'i' } },
+          { nearbyUniversities: { $regex: String(term), $options: 'i' } }
+        ]
+      })).flatMap(cond => cond.$or);
+
+      if (mongoose.Types.ObjectId.isValid(university)) {
+        orConditions.push({ university: university });
+      }
+
+      conditions.push({ $or: orConditions });
+    }
+
+    // Price filter
+    if (!isInvalid(minPrice) || !isInvalid(maxPrice)) {
+      filter.price = {};
+      if (!isInvalid(minPrice)) filter.price.$gte = Number(minPrice);
+      if (!isInvalid(maxPrice)) filter.price.$lte = Number(maxPrice);
+    }
+
+    // Gender filter
+    if (!isInvalid(gender) && gender !== 'Mixed') {
+      filter.genderAllowed = gender;
+    }
+
+    // Verified filter
+    if (verified === 'true') {
+      filter.isVerified = true;
+    }
+
+    // Available now
+    if (availableNow === 'true') {
+      filter.availableRooms = { $gt: 0 };
+    }
+
+    // Amenities filter (Requires ALL selected amenities - ID Based)
+    if (!isInvalid(amenities)) {
+      const amenitiesArray = Array.isArray(amenities) ? amenities : String(amenities).split(',').map(a => a.trim());
+      const validAmenities = amenitiesArray.filter(a => a !== '');
+
+      if (validAmenities.length > 0) {
+        validAmenities.forEach(a => {
+          const id = a.toLowerCase();
+          // Map central IDs to DB fields/logic
+          if (id === 'wifi') conditions.push({ wifi: true });
+          else if (id === 'ac') conditions.push({ ac: true });
+          else if (id === 'security') conditions.push({ security: true });
+          else if (id === 'water_supply') conditions.push({ water: true });
+          else if (id === 'generator') conditions.push({ electricity: true });
+          else if (id === 'private_washroom') conditions.push({ amenities: { $regex: /private washroom/i } });
+          else if (id === 'shared_washroom') conditions.push({ amenities: { $regex: /shared washroom/i } });
+          else if (id === 'kitchen') conditions.push({ amenities: { $regex: /[^d] kitchen/i } }); // Not shared
+          else if (id === 'shared_kitchen') conditions.push({ amenities: { $regex: /shared kitchen/i } });
+          else if (id === 'study_area') conditions.push({ amenities: { $regex: /study area|desk/i } });
+          else if (id === 'parking') conditions.push({ amenities: { $regex: /parking/i } });
+          else if (id === 'laundry') conditions.push({ amenities: { $regex: /laundry|washing/i } });
+          else if (id === 'refrigerator') conditions.push({ amenities: { $regex: /refrigerator|fridge/i } });
+          else if (id === 'wardrobe') conditions.push({ amenities: { $regex: /wardrobe/i } });
+          else if (id === 'balcony') conditions.push({ amenities: { $regex: /balcony/i } });
+          else if (id === 'television') conditions.push({ amenities: { $regex: /television|tv/i } });
+          else if (id === 'ceiling_fan') conditions.push({ amenities: { $regex: /fan/i } });
+          else conditions.push({ amenities: { $in: [a] } });
+        });
       }
     }
-  }
 
-  // Room Types filter
-  if (!isInvalid(roomTypes)) {
-    const roomTypesArray = Array.isArray(roomTypes) ? roomTypes : String(roomTypes).split(',').map(t => t.trim());
-    const validTypes = roomTypesArray.filter(t => t !== '');
+    // Room Types / Capacity filter
+    const selectedRoomTypes = roomTypes || roomCapacity;
+    if (!isInvalid(selectedRoomTypes)) {
+      const roomTypesArray = Array.isArray(selectedRoomTypes) ? selectedRoomTypes : String(selectedRoomTypes).split(',').map(t => t.trim());
+      const validTypes = roomTypesArray.filter(t => t !== '');
 
-    if (validTypes.length > 0) {
-      const hostelsWithRoomTypes = await Room.distinct('hostel', {
-        occupancyStyle: { $in: validTypes },
-        roomStatus: 'available',
-        availableBeds: { $gt: 0 }
+      if (validTypes.length > 0) {
+        const mappedTypes = validTypes.map(t => {
+           const low = t.toLowerCase();
+           if (low === 'single') return '1-in-1';
+           if (low === 'double') return '2-in-1';
+           if (low === 'triple') return '3-in-1';
+           if (low === 'quad') return '4-in-1';
+           if (low.includes('5')) return '5-in-1';
+           if (low.includes('6')) return '6-in-1';
+           if (low.includes('7')) return '7-in-1';
+           if (low.includes('8')) return '8-in-1';
+           return t;
+        });
+
+        const hostelsWithRoomTypes = await Room.distinct('hostel', {
+          occupancyStyle: { $in: mappedTypes },
+          roomStatus: 'available',
+          availableBeds: { $gt: 0 }
+        });
+
+        conditions.push({ _id: { $in: hostelsWithRoomTypes } });
+      }
+    }
+
+    // Combine all conditions into the main filter
+    if (conditions.length > 0) {
+      filter.$and = conditions;
+    }
+
+    console.log('FINAL HOSTEL FILTER:', JSON.stringify(filter, null, 2));
+
+    // Sorting
+    let sortOption = { createdAt: -1 };
+    if (!isInvalid(sort)) {
+      switch (sort) {
+        case 'price_low': sortOption = { price: 1 }; break;
+        case 'price_high': sortOption = { price: -1 }; break;
+        case 'popular': sortOption = { totalRooms: -1 }; break;
+        case 'newest': sortOption = { createdAt: -1 }; break;
+        case 'rated': sortOption = { createdAt: 1 }; break;
+        default: sortOption = { createdAt: -1 };
+      }
+    }
+
+    const pageNum = Math.max(1, Number(page) || 1);
+    const limitNum = Math.max(1, Number(limit) || 12);
+    const skip = (pageNum - 1) * limitNum;
+
+    const hostels = await Hostel.find(filter)
+      .populate('university', 'name location region')
+      .populate('owner', 'name profileImage isOwnerVerified verificationStatus')
+      .sort(sortOption)
+      .skip(skip)
+      .limit(limitNum)
+      .lean();
+
+    // RANKING: High-Relevance Discovery (Primary Matches First)
+    if (university && !isInvalid(university)) {
+      const targetUni = normalizeUniversity(university).toLowerCase();
+      hostels.sort((a, b) => {
+        const aPrimary = normalizeUniversity(a.nearestUniversity || '').toLowerCase() === targetUni;
+        const bPrimary = normalizeUniversity(b.nearestUniversity || '').toLowerCase() === targetUni;
+        const aSecondary = a.nearbyUniversities?.some(u => normalizeUniversity(u).toLowerCase() === targetUni);
+        const bSecondary = b.nearbyUniversities?.some(u => normalizeUniversity(u).toLowerCase() === targetUni);
+        if (aPrimary && !bPrimary) return -1;
+        if (!aPrimary && bPrimary) return 1;
+        if (aSecondary && !bSecondary) return -1;
+        if (!aSecondary && bSecondary) return 1;
+        return 0;
       });
-      
-      if (!filter.$and) filter.$and = [];
-      filter.$and.push({ _id: { $in: hostelsWithRoomTypes } });
     }
+
+    const total = await Hostel.countDocuments(filter);
+
+    const mappedHostels = hostels.map(transformHostelResponse);
+
+    const responseData = {
+      total,
+      currentPage: pageNum,
+      totalPages: Math.ceil(total / limitNum),
+      hostels: mappedHostels,
+      results: mappedHostels
+    };
+
+    sendSuccess(res, responseData, 'Hostels retrieved successfully');
+  } catch (error) {
+    console.error('CRITICAL ERROR IN GETHOSTELS:', error);
+    return sendError(res, 'Internal Server Error during hostel search', 500);
   }
-
-  console.log('FINAL HOSTEL FILTER:', JSON.stringify(filter, null, 2));
-
-  // Sorting
-  let sortOption = { createdAt: -1 };
-  if (!isInvalid(sort)) {
-    switch (sort) {
-      case 'price_low': sortOption = { price: 1 }; break;
-      case 'price_high': sortOption = { price: -1 }; break;
-      case 'popular': sortOption = { totalRooms: -1 }; break; // Placeholder for popularity
-      case 'newest': sortOption = { createdAt: -1 }; break;
-      case 'rated': sortOption = { createdAt: 1 }; break; // Placeholder for rating
-      default: sortOption = { createdAt: -1 };
-    }
-  }
-
-  const pageNum = Math.max(1, Number(page) || 1);
-  const limitNum = Math.max(1, Number(limit) || 12);
-  const skip = (pageNum - 1) * limitNum;
-
-  const hostels = await Hostel.find(filter)
-    .populate('university', 'name location region')
-    .populate('owner', 'name profileImage isOwnerVerified verificationStatus')
-    .skip(skip)
-    .limit(limitNum)
-    .sort(sortOption)
-    .lean();
-
-  const total = await Hostel.countDocuments(filter);
-
-  const mappedHostels = hostels.map((h) => ({
-    ...h,
-    title: h.title || h.name,
-    image: h.image || h.featuredImage || (h.images && h.images.length > 0 ? h.images[0] : null)
-  }));
-
-  const responseData = {
-    total,
-    currentPage: pageNum,
-    totalPages: Math.ceil(total / limitNum),
-    hostels: mappedHostels,
-    results: mappedHostels
-  };
-
-  // CACHE DATA
-  cache.set(cacheKey, responseData, 300); // 5 minutes
-
-  sendSuccess(res, responseData, 'Hostels retrieved successfully');
 });
 
 // GET OWNER HOSTELS
@@ -452,6 +532,24 @@ const updateHostel = asyncHandler(async (req, res) => {
 
   const oldAvailable = hostel.available;
   const updateData = pickHostelFields(req.body);
+  const data = updateData; // For validation logic
+  // UNIVERSITY VALIDATION: 1 Primary + Max 4 Nearby (Total 5)
+  const effectiveNearestUniversity = data.nearestUniversity ?? hostel.nearestUniversity;
+  if (!effectiveNearestUniversity) {
+    return sendError(res, 'Primary University is required', 400);
+  }
+
+  if (data.nearbyUniversities) {
+    // Remove duplicates and ensure primary isn't in nearby
+    data.nearbyUniversities = [...new Set(data.nearbyUniversities)]
+      .filter(u => u !== effectiveNearestUniversity)
+      .slice(0, 4);
+    
+    if (data.nearbyUniversities.length > 4) {
+      return sendError(res, 'You can select a maximum of 4 nearby universities.', 400);
+    }
+  }
+
 
   // SMART MERGE FOR LOCATION: Prevent wiping out coordinates during partial updates
   if (updateData.location) {
@@ -500,9 +598,8 @@ const updateHostel = asyncHandler(async (req, res) => {
     }
   });
 
-  // INVALIDATE CACHE
-  cache.delete(`hostel_details_${req.params.id}`);
-  cache.deleteMatching('hostels_search_');
+  invalidateHostelBrowseCaches(hostel);
+  invalidateHostelBrowseCaches(updatedHostel);
 
   sendSuccess(res, updatedHostel, 'Hostel updated successfully');
 });
@@ -536,14 +633,40 @@ const deleteHostel = asyncHandler(async (req, res) => {
     }
   });
 
-  // INVALIDATE CACHE
-  cache.delete(`hostel_details_${req.params.id}`);
-  cache.deleteMatching('hostels_search_');
+  invalidateHostelBrowseCaches(hostel);
 
   sendSuccess(res, null, 'Hostel deleted successfully');
 });
 
+
+
+
+
+// GET ACTIVE UNIVERSITIES (With Counts)
+const getActiveUniversities = asyncHandler(async (req, res) => {
+  const cached = cache.get(HOSTEL_COUNT_PREFIX);
+  if (cached) {
+    return sendSuccess(res, cached, 'Active universities retrieved from cache');
+  }
+
+  const pipeline = [
+    {
+      $match: {
+        verificationStatus: 'approved',
+        available: true,
+        nearestUniversity: { $nin: ['', null] },
+      },
+    },
+    { $group: { _id: "$nearestUniversity", count: { $sum: 1 } } },
+    { $sort: { count: -1 } }
+  ];
+  const results = await Hostel.aggregate(pipeline);
+  cache.set(HOSTEL_COUNT_PREFIX, results, 21600);
+  sendSuccess(res, results, 'Active universities retrieved');
+});
+
 module.exports = {
+  getActiveUniversities,
   createHostel,
   getHostels,
   getOwnerHostels,

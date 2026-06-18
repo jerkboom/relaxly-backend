@@ -120,6 +120,11 @@ const roomSchema = new mongoose.Schema(
 roomSchema.index({ hostel: 1 });
 roomSchema.index({ hostel: 1, availableBeds: 1, roomStatus: 1 });
 roomSchema.index({ hostel: 1, genderAllocation: 1, roomStatus: 1, availableBeds: 1 });
+roomSchema.index({ roomType: 1 });
+roomSchema.index({ genderAllocation: 1 });
+roomSchema.index({ availableBeds: 1 });
+roomSchema.index({ occupancyStyle: 1, roomStatus: 1, availableBeds: 1 });
+roomSchema.index({ roomType: 1, genderAllocation: 1, availableBeds: 1 });
 
 // SYNC PRICING AND AVAILABILITY
 roomSchema.pre('save', async function () {

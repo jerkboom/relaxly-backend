@@ -115,11 +115,56 @@ const getUserById = asyncHandler(async (req, res) => {
   sendSuccess(res, user, 'Profile fetched successfully');
 });
 
+
+// TOGGLE WISHLIST
+const toggleWishlist = asyncHandler(async (req, res) => {
+  const { hostelId } = req.params;
+  const user = await User.findById(req.user._id);
+  const Hostel = require('../models/Hostel');
+
+  if (!user) {
+    res.status(404);
+    throw new Error('User not found');
+  }
+
+  const isSaved = user.wishlist.includes(hostelId);
+  
+  if (isSaved) {
+    // Remove
+    user.wishlist = user.wishlist.filter(id => id.toString() !== hostelId);
+    await Hostel.findByIdAndUpdate(hostelId, { $inc: { timesSaved: -1 } });
+  } else {
+    // Add
+    user.wishlist.push(hostelId);
+    await Hostel.findByIdAndUpdate(hostelId, { $inc: { timesSaved: 1 } });
+  }
+
+  await user.save();
+  sendSuccess(res, { isSaved: !isSaved }, isSaved ? 'Removed from wishlist' : 'Added to wishlist');
+});
+
+// GET WISHLIST
+const getWishlist = asyncHandler(async (req, res) => {
+  const user = await User.findById(req.user._id).populate({
+    path: 'wishlist',
+    populate: { path: 'university', select: 'name' }
+  });
+
+  if (!user) {
+    res.status(404);
+    throw new Error('User not found');
+  }
+
+  sendSuccess(res, user.wishlist, 'Wishlist retrieved successfully');
+});
+
 module.exports = {
   getUserById,
   getProfile,
   updateProfile,
   verifyInviteCode,
+  toggleWishlist,
+  getWishlist,
 };
 
 

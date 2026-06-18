@@ -180,6 +180,12 @@ const userSchema = new mongoose.Schema(
         type: String,
         enum: ['Male', 'Female'],
       },
+      wishlist: [
+        {
+          type: mongoose.Schema.Types.ObjectId,
+          ref: 'Hostel',
+        },
+      ],
     },
     {
       timestamps: true,

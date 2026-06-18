@@ -3,6 +3,7 @@ const Room = require('../models/Room');
 const Hostel = require('../models/Hostel');
 const { sendSuccess, sendError } = require('../utils/responseHandler');
 const cache = require('../utils/cache');
+const { invalidateHostelBrowseCaches } = require('../utils/hostelCache');
 const { logOwnerActivity } = require('../utils/ownerActivityLogger');
 
 const normalizeRoomAvailabilityInput = (body) => {
@@ -58,6 +59,9 @@ const assertOwnerCanManageHostel = async (hostelId, userId) => {
   }
   return hostel;
 };
+
+const getHostelForCacheInvalidation = (hostelId) =>
+  Hostel.findById(hostelId).select('_id nearestUniversity nearbyUniversities').lean();
 
 const pickRoomFields = (body) => {
   const allowedFields = [
@@ -176,9 +180,7 @@ const createRoom = asyncHandler(async (req, res) => {
     availableRooms: availableRoomsCount,
   });
 
-  // INVALIDATE CACHE
-  cache.delete(`hostel_details_${hostel}`);
-  cache.deleteMatching('hostels_search_');
+  invalidateHostelBrowseCaches(await getHostelForCacheInvalidation(hostel));
 
   sendSuccess(res, populatedRoom, 'Room created successfully', 201);
 });
@@ -280,10 +282,8 @@ const updateRoom = asyncHandler(async (req, res) => {
     await Hostel.findByIdAndUpdate(room.hostel, { availableRooms: availableRoomsCount });
   }
 
-  // INVALIDATE CACHE
   cache.delete(`room_meta_${room._id}`);
-  cache.delete(`hostel_details_${room.hostel}`);
-  cache.deleteMatching('hostels_search_');
+  invalidateHostelBrowseCaches(await getHostelForCacheInvalidation(room.hostel));
 
   sendSuccess(res, updatedRoom, 'Room updated successfully');
 });
@@ -332,10 +332,8 @@ const deleteRoom = asyncHandler(async (req, res) => {
   availableRooms: availableRoomsCount,
   });
 
-  // INVALIDATE CACHE
   cache.delete(`room_meta_${req.params.id}`);
-  cache.delete(`hostel_details_${hostelId}`);
-  cache.deleteMatching('hostels_search_');
+  invalidateHostelBrowseCaches(await getHostelForCacheInvalidation(hostelId));
 
   sendSuccess(res, null, 'Room deleted successfully');
   });

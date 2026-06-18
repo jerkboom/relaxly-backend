@@ -53,11 +53,25 @@ class Cache {
   }
 
   deleteMatching(prefix) {
+    let deleted = 0;
     for (const key of this.cache.keys()) {
       if (key.startsWith(prefix)) {
         this.cache.delete(key);
+        deleted++;
       }
     }
+    return deleted;
+  }
+
+  deleteWhere(predicate) {
+    let deleted = 0;
+    for (const key of this.cache.keys()) {
+      if (predicate(key)) {
+        this.cache.delete(key);
+        deleted++;
+      }
+    }
+    return deleted;
   }
 
   getStats() {

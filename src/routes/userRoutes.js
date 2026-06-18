@@ -4,16 +4,25 @@
 const router =
   express.Router();
 
+
+
+const {
+  protect,
+} = require('../middleware/authMiddleware');
+
+
 const {
   getUserById,
   getProfile,
   updateProfile,
   verifyInviteCode,
+  toggleWishlist,
+  getWishlist,
 } = require('../controllers/userController');
 
-const {
-  protect,
-} = require('../middleware/authMiddleware');
+// WISHLIST
+router.get('/wishlist', protect, getWishlist);
+router.post('/wishlist/:hostelId', protect, toggleWishlist);
 
 // GET PROFILE
 router.get(

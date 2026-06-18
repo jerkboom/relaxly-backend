@@ -8,6 +8,7 @@ const {
   getSingleHostel,
   getHostelRooms,
   getHostelContactDetails,
+  getActiveUniversities,
   updateHostel,
   deleteHostel,
 } = require('../controllers/hostelController');
@@ -22,6 +23,10 @@ const {
 } = require('../middleware/verificationMiddleware');
 
 const checkMaintenanceMode = require('../middleware/maintenanceMiddleware');
+const {
+  createHostelSearchCacheKey,
+  responseCache,
+} = require('../middleware/cacheMiddleware');
 
 /*
 |--------------------------------------------------------------------------
@@ -53,9 +58,21 @@ router.post(
 |--------------------------------------------------------------------------
 */
 
+
+
+// Get active universities
+router.get(
+  '/active-universities',
+  getActiveUniversities
+);
+
 // Get all hostels
 router.get(
   '/',
+  responseCache({
+    ttl: 300,
+    keyBuilder: (req) => createHostelSearchCacheKey(req.query),
+  }),
   getHostels
 );
 

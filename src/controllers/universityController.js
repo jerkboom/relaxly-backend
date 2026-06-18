@@ -1,5 +1,6 @@
 const University = require('../models/University');
 const cache = require('../utils/cache');
+const { invalidateUniversityLookupCaches } = require('../utils/hostelCache');
 
 // CREATE UNIVERSITY
 const createUniversity = async (req, res) => {
@@ -14,8 +15,7 @@ const createUniversity = async (req, res) => {
       image,
     });
 
-    // INVALIDATE CACHE
-    cache.delete('universities');
+    invalidateUniversityLookupCaches();
 
     res.status(201).json({
       message: 'University created successfully',
@@ -40,7 +40,7 @@ const getUniversities = async (req, res) => {
     const universities = await University.find();
 
     // CACHE DATA
-    cache.set(cacheKey, universities, 3600); // 1 hour
+    cache.set(cacheKey, universities, 86400); // 24 hours
 
     res.status(200).json(universities);
   } catch (error) {

@@ -2,6 +2,7 @@ const Hostel = require('../models/Hostel');
 const { logAdminAction } = require('../utils/auditLogger');
 const { APIFeatures } = require('../utils/apiFeatures');
 const cache = require('../utils/cache');
+const { invalidateHostelBrowseCaches } = require('../utils/hostelCache');
 
 class HostelModerationService {
   async getPendingHostels(queryObj) {
@@ -55,9 +56,7 @@ class HostelModerationService {
 
     await hostel.save();
 
-    // INVALIDATE CACHE
-    cache.delete(`hostel_details_${hostel._id}`);
-    cache.deleteMatching('hostels_search_');
+    invalidateHostelBrowseCaches(hostel);
     cache.deleteMatching('admin_dashboard_analytics_');
 
     await logAdminAction({
@@ -91,9 +90,7 @@ class HostelModerationService {
 
     await hostel.save();
 
-    // INVALIDATE CACHE
-    cache.delete(`hostel_details_${hostel._id}`);
-    cache.deleteMatching('hostels_search_');
+    invalidateHostelBrowseCaches(hostel);
     cache.deleteMatching('admin_dashboard_analytics_');
 
     await logAdminAction({
@@ -128,9 +125,7 @@ class HostelModerationService {
 
     await hostel.save();
 
-    // INVALIDATE CACHE
-    cache.delete(`hostel_details_${hostel._id}`);
-    cache.deleteMatching('hostels_search_');
+    invalidateHostelBrowseCaches(hostel);
     cache.deleteMatching('admin_dashboard_analytics_');
 
     await logAdminAction({
