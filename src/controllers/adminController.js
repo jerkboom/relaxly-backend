@@ -530,7 +530,8 @@ const getPublicSettings = asyncHandler(async (req, res) => {
         email: 'support@relaxly.com',
         phone: '+233 XX XXX XXXX',
         whatsapp: '+233XXXXXXXXX'
-      }
+      },
+      duplicateBookingWindowMs: parseInt(process.env.DUPLICATE_BOOKING_WINDOW_MS, 10) || 20 * 24 * 60 * 60 * 1000
     };
 
     cache.set(cacheKey, responseData, 1800); // 30 minutes
@@ -542,7 +543,8 @@ const getPublicSettings = asyncHandler(async (req, res) => {
       maintenanceMode: false,
       maintenanceMessage: 'Platform is currently under maintenance.',
       roomTypeAdjustments: {},
-      supportSettings: { email: 'support@relaxly.com', phone: '+233 XX XXX XXXX', whatsapp: '+233XXXXXXXXX' }
+      supportSettings: { email: 'support@relaxly.com', phone: '+233 XX XXX XXXX', whatsapp: '+233XXXXXXXXX' },
+      duplicateBookingWindowMs: parseInt(process.env.DUPLICATE_BOOKING_WINDOW_MS, 10) || 20 * 24 * 60 * 60 * 1000
     });
   }
 });

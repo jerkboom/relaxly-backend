@@ -49,9 +49,12 @@ const createBooking =
     if (!roomId) return sendError(res, 'Room ID required.', 400);
     if (!studentGender) return sendError(res, 'Gender missing.', 400);
 
-    // 2. FAST PATH: 20-DAY COOLDOWN & DUPLICATE CHECK
+    // 2. FAST PATH: COOLDOWN & DUPLICATE CHECK
     const tCheckStart = Date.now();
-    const cooldownDate = new Date(Date.now() - 20 * 24 * 60 * 60 * 1000); // 20 days ago
+    const duplicateWindow = parseInt(process.env.DUPLICATE_BOOKING_WINDOW_MS, 10) || 20 * 24 * 60 * 60 * 1000;
+    const cooldownDate = new Date(Date.now() - duplicateWindow);
+
+
 
     const existingBooking = await Booking.findOne({
       student: studentId,
@@ -77,7 +80,18 @@ const createBooking =
       }
       
       // Otherwise, block the duplicate booking
-      return sendError(res, 'You have already booked this room within the last 20 days.', 400);
+      let windowMessage = 'recently';
+      if (duplicateWindow >= 24 * 60 * 60 * 1000) {
+        const days = Math.round(duplicateWindow / (24 * 60 * 60 * 1000));
+        windowMessage = `within the last ${days} days`;
+      } else if (duplicateWindow >= 60 * 1000) {
+        const minutes = Math.round(duplicateWindow / (60 * 1000));
+        windowMessage = `within the last ${minutes} minute${minutes > 1 ? 's' : ''}`;
+      } else {
+        const seconds = Math.round(duplicateWindow / 1000);
+        windowMessage = `within the last ${seconds} second${seconds > 1 ? 's' : ''}`;
+      }
+      return sendError(res, `You have already booked this room ${windowMessage}.`, 400);
     }
     const dCheck = Date.now() - tCheckStart;
 

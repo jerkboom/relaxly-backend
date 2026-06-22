@@ -119,6 +119,13 @@ const getUserById = asyncHandler(async (req, res) => {
 // TOGGLE WISHLIST
 const toggleWishlist = asyncHandler(async (req, res) => {
   const { hostelId } = req.params;
+  const mongoose = require('mongoose');
+
+  if (!mongoose.Types.ObjectId.isValid(hostelId)) {
+    res.status(400);
+    throw new Error('Invalid hostel ID');
+  }
+
   const user = await User.findById(req.user._id);
   const Hostel = require('../models/Hostel');
 
@@ -127,12 +134,18 @@ const toggleWishlist = asyncHandler(async (req, res) => {
     throw new Error('User not found');
   }
 
-  const isSaved = user.wishlist.includes(hostelId);
+  const isSaved = user.wishlist.some(id => id.toString() === hostelId);
   
   if (isSaved) {
     // Remove
     user.wishlist = user.wishlist.filter(id => id.toString() !== hostelId);
-    await Hostel.findByIdAndUpdate(hostelId, { $inc: { timesSaved: -1 } });
+    
+    // Decrement but ensure it doesn't go below 0
+    const hostel = await Hostel.findById(hostelId);
+    if (hostel) {
+      hostel.timesSaved = Math.max(0, (hostel.timesSaved || 0) - 1);
+      await hostel.save();
+    }
   } else {
     // Add
     user.wishlist.push(hostelId);
@@ -155,7 +168,17 @@ const getWishlist = asyncHandler(async (req, res) => {
     throw new Error('User not found');
   }
 
-  sendSuccess(res, user.wishlist, 'Wishlist retrieved successfully');
+  // Filter out null entries due to deleted hostels
+  const originalLength = user.wishlist.length;
+  const filteredWishlist = user.wishlist.filter(item => item !== null);
+
+  // If some hostels were deleted, update the user document in the DB to clean up stale references
+  if (filteredWishlist.length < originalLength) {
+    user.wishlist = filteredWishlist.map(item => item._id);
+    await user.save();
+  }
+
+  sendSuccess(res, filteredWishlist, 'Wishlist retrieved successfully');
 });
 
 module.exports = {
