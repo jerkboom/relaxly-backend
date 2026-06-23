@@ -1,5 +1,6 @@
 const mongoose = require('mongoose');
 const asyncHandler = require('express-async-handler');
+const stringSimilarity = require('string-similarity');
 
 const Hostel = require('../models/Hostel');
 const Room = require('../models/Room');
@@ -335,6 +336,39 @@ const getHostels = asyncHandler(async (req, res) => {
       .limit(limitNum)
       .lean();
 
+    // Option 3: Dynamic Projected Summary lookup for fetched hostels
+    const hostelIds = hostels.map(h => h._id);
+    const rooms = await Room.find(
+      { hostel: { $in: hostelIds }, roomStatus: 'available' },
+      { hostel: 1, occupancyStyle: 1, price: 1, totalPrice: 1, availableBeds: 1, roomStatus: 1 }
+    ).lean();
+
+    const roomSummaryMap = {};
+    rooms.forEach(room => {
+      const hostelId = room.hostel.toString();
+      const style = room.occupancyStyle || '1-in-1';
+      const price = room.totalPrice !== undefined ? room.totalPrice : room.price;
+      
+      if (!roomSummaryMap[hostelId]) {
+        roomSummaryMap[hostelId] = {};
+      }
+      
+      const existing = roomSummaryMap[hostelId][style];
+      if (!existing || price < existing.price) {
+        roomSummaryMap[hostelId][style] = {
+          occupancyStyle: style,
+          price: price,
+          availableBeds: room.availableBeds || 0
+        };
+      }
+    });
+
+    hostels.forEach(h => {
+      const summaryObj = roomSummaryMap[h._id.toString()];
+      h.roomSummary = summaryObj ? Object.values(summaryObj).sort((a, b) => a.price - b.price) : [];
+    });
+
+
     // RANKING: High-Relevance Discovery (Primary Matches First)
     if (university && !isInvalid(university)) {
       const targetUni = normalizeUniversity(university).toLowerCase();
@@ -665,7 +699,168 @@ const getActiveUniversities = asyncHandler(async (req, res) => {
   sendSuccess(res, results, 'Active universities retrieved');
 });
 
+// GET SEARCH SUGGESTIONS (FUZZY & RANKED)
+const getSearchSuggestions = asyncHandler(async (req, res) => {
+  try {
+    const q = req.query.q || '';
+    if (!q || q.trim().length === 0) {
+      return sendSuccess(res, { suggestions: [] }, 'Empty query');
+    }
+
+    const queryLower = q.trim().toLowerCase();
+    const cacheKey = `suggestions:${queryLower}`;
+
+    // 1. Check Backend Cache First
+    const cachedSuggestions = cache.get(cacheKey);
+    if (cachedSuggestions) {
+      return sendSuccess(res, { suggestions: cachedSuggestions }, 'Suggestions retrieved from cache');
+    }
+
+    const queryAliases = getUniversityAliases(queryLower).map(a => a.toLowerCase());
+
+    // 2. Fetch approved and available hostels, projecting only fields required for autocomplete
+    const hostels = await Hostel.find({
+      verificationStatus: 'approved',
+      available: true
+    })
+    .select('name location nearestUniversity nearbyUniversities')
+    .lean();
+
+
+
+    const candidates = new Map();
+
+    hostels.forEach(hostel => {
+      // 1. Hostel Name
+      if (hostel.name) {
+        const nameTrimmed = hostel.name.trim();
+        const key = `hostel:${nameTrimmed.toLowerCase()}`;
+        if (!candidates.has(key)) {
+          candidates.set(key, { type: 'hostel', name: nameTrimmed });
+        }
+      }
+
+      // 2. Location details (City, Region, Address)
+      if (hostel.location) {
+        const { address, city, region } = hostel.location;
+        if (address) {
+          const val = address.trim();
+          const key = `location:${val.toLowerCase()}`;
+          if (!candidates.has(key)) {
+            candidates.set(key, { type: 'location', name: val });
+          }
+        }
+        if (city) {
+          const val = city.trim();
+          const key = `location:${val.toLowerCase()}`;
+          if (!candidates.has(key)) {
+            candidates.set(key, { type: 'location', name: val });
+          }
+        }
+        if (region) {
+          const val = region.trim();
+          const key = `location:${val.toLowerCase()}`;
+          if (!candidates.has(key)) {
+            candidates.set(key, { type: 'location', name: val });
+          }
+        }
+      }
+
+      // 3. University details (Nearest and Nearby)
+      if (hostel.nearestUniversity) {
+        const val = hostel.nearestUniversity.trim();
+        const key = `location:${val.toLowerCase()}`;
+        if (!candidates.has(key)) {
+          candidates.set(key, { type: 'location', name: val });
+        }
+      }
+
+      if (Array.isArray(hostel.nearbyUniversities)) {
+        hostel.nearbyUniversities.forEach(uni => {
+          if (uni) {
+            const val = uni.trim();
+            const key = `location:${val.toLowerCase()}`;
+            if (!candidates.has(key)) {
+              candidates.set(key, { type: 'location', name: val });
+            }
+          }
+        });
+      }
+    });
+
+    const scoredCandidates = [];
+
+    for (const candidate of candidates.values()) {
+      const nameLower = candidate.name.toLowerCase();
+      let score = 0;
+
+      // Exact Match
+      if (nameLower === queryLower) {
+        score += 10.0;
+      }
+      // Starts with match
+      else if (nameLower.startsWith(queryLower)) {
+        score += 8.0;
+      }
+      // Substring match
+      else if (nameLower.includes(queryLower)) {
+        score += 5.0;
+      }
+
+      // Alias match: check if the query is an alias of the candidate or vice versa
+      const candidateAliases = getUniversityAliases(candidate.name).map(a => a.toLowerCase());
+      const isAliasMatch = candidateAliases.some(alias => 
+        alias === queryLower || alias.startsWith(queryLower) || queryAliases.includes(alias)
+      );
+      if (isAliasMatch) {
+        score += 7.0;
+      }
+
+      // Fuzzy match
+      const fuzzy = stringSimilarity.compareTwoStrings(queryLower, nameLower);
+      let bestFuzzy = fuzzy;
+      candidateAliases.forEach(alias => {
+        const f = stringSimilarity.compareTwoStrings(queryLower, alias);
+        if (f > bestFuzzy) {
+          bestFuzzy = f;
+        }
+      });
+
+      if (bestFuzzy > 0.3) {
+        score += bestFuzzy * 4.0;
+      }
+
+      if (score > 0) {
+        scoredCandidates.push({
+          ...candidate,
+          score
+        });
+      }
+    }
+
+    // Sort descending by score
+    scoredCandidates.sort((a, b) => b.score - a.score);
+
+    // Get top 10 unique suggestions
+    const suggestions = scoredCandidates.slice(0, 10).map(item => ({
+      type: item.type,
+      name: item.name
+    }));
+
+
+
+    // 3. Cache the calculated suggestions for 5 minutes (300 seconds)
+    cache.set(cacheKey, suggestions, 300);
+
+    sendSuccess(res, { suggestions }, 'Suggestions retrieved successfully');
+  } catch (error) {
+    console.error('ERROR IN GETSEARCHSUGGESTIONS:', error);
+    return sendError(res, 'Internal Server Error during suggestions lookup', 500);
+  }
+});
+
 module.exports = {
+  getSearchSuggestions,
   getActiveUniversities,
   createHostel,
   getHostels,

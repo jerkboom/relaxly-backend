@@ -6,7 +6,7 @@ const connectDB = require('../src/config/db');
 const checkRoom = async () => {
   try {
     await connectDB();
-    const room = await Room.findById('6a06114ce61cd55dc0c3257c');
+    const room = await Room.findById('69ff859883633e5092882b89');
     console.log('Room Data:', JSON.stringify(room, null, 2));
   } catch (err) {
     console.error('Error:', err);

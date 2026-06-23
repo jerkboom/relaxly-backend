@@ -22,6 +22,7 @@ const invalidateHostelBrowseCaches = (hostel = {}) => {
     cache.delete(`hostel_details_${hostel._id || hostel.id}`);
   }
   cache.delete(HOSTEL_COUNT_PREFIX);
+  cache.deleteMatching('suggestions:');
 
   return cache.deleteWhere((key) => {
     if (!key.startsWith(HOSTEL_SEARCH_PREFIX)) return false;

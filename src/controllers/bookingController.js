@@ -24,6 +24,7 @@ const { sendSuccess, sendError } = require('../utils/responseHandler');
 const { logOwnerActivity } = require('../utils/ownerActivityLogger');
 
 const crypto = require('crypto');
+const { runTransactionWithRetry } = require('../utils/transactionHelper');
 
 /**
  * Generate a unique booking code
@@ -136,114 +137,117 @@ const createBooking =
 
     // 5. MINIMAL TRANSACTIONAL WRITE
     const tTxStart = Date.now();
-    const session = await Room.startSession();
+    let newBooking;
     try {
-      session.startTransaction();
+      newBooking = await runTransactionWithRetry(async (session) => {
+        // Fetch the fresh room data inside the transaction to get the latest bed count
+        const currentRoom = await Room.findById(roomId).session(session);
+        if (!currentRoom) throw new Error('Room not found.');
 
-      // Determine if this specific booking will take the last available bed
-      const isSellingOut = (roomData.availableBeds - 1) <= 0;
+        // Determine if this specific booking will take the last available bed
+        const isSellingOut = (currentRoom.availableBeds - 1) <= 0;
 
-      // Build a standard, lightning-fast MongoDB update object
-      const updatePayload = {
-        $inc: { 
-          [updateField]: -1, 
-          availableBeds: -1 
+        // Build a standard, lightning-fast MongoDB update object
+        const updatePayload = {
+          $inc: { 
+            [updateField]: -1, 
+            availableBeds: -1 
+          }
+        };
+
+        // If it's the last bed, flip the status in the exact same atomic step
+        if (isSellingOut) {
+          updatePayload.$set = { roomStatus: 'unavailable' };
         }
-      };
 
-      // If it's the last bed, flip the status in the exact same atomic step
-      if (isSellingOut) {
-        updatePayload.$set = { roomStatus: 'unavailable' };
+        const reservedRoom = await Room.findOneAndUpdate(
+          { _id: roomId, [updateField]: { $gt: 0 }, roomStatus: 'available' },
+          updatePayload,
+          { new: true, session, lean: true }
+        );
+
+        if (!reservedRoom) throw new Error('Sold out or room unavailable.');
+
+        const [bookingDoc] = await Booking.create([{
+          student: studentId,
+          history: [{ event: 'BOOKING_CREATED', details: 'Student initiated booking request', actor: studentId }],
+          room: roomId,
+          hostel: roomData.hostel._id,
+          bookingCode,
+          amount: breakdown.totalPaid,
+          ...breakdown,
+          checkInDate,
+          expiresAt,
+          studentPhone: studentUser.phone,
+          studentIdCard: studentUser.studentId,
+          studentUniversity: studentUser.customUniversity || (studentUser.university ? studentUser.university.name : studentUser.schoolName),
+          refundPolicyAccepted: true,
+          refundPolicyAcceptedAt: new Date(),
+        }], { session });
+
+        return bookingDoc;
+      });
+    } catch (error) {
+      console.error('BOOKING_ERROR:', error.message);
+      const statusCode = error.statusCode || 400;
+      return sendError(res, error.message || 'Booking failed.', statusCode);
+    }
+
+    const dTx = Date.now() - tTxStart;
+
+    // 6. RESPONSE SYNTHESIS (Zero-Query Finalization)
+    const tRespStart = Date.now();
+    const bookingObj = newBooking.toObject();
+    
+    const responseData = {
+      success: true,
+      message: 'Booking created successfully',
+      booking: {
+        ...bookingObj,
+        room: roomData, // Already in memory
+        hostel: roomData.hostel, // Already in memory
+        student: {
+          _id: req.user._id,
+          name: req.user.name,
+          email: req.user.email,
+          phone: req.user.phone,
+          gender: req.user.gender
+        }
+      }
+    };
+    
+    const finalResponse = {
+      ...responseData,
+      ...responseData.booking,
+      bookingId: responseData.booking._id,
+      totalAmount: responseData.booking.totalPaid,
+      data: responseData.booking
+    };
+    const dResp = Date.now() - tRespStart;
+
+    // 7. BACKGROUND PROCESSES
+    setImmediate(() => {
+      syncHostelAvailability(roomData.hostel._id).catch(() => {});
+      
+      // Update cache in-memory to prevent immediate DB hit on next request
+      if (roomData) {
+        const nextAvailableBeds = Math.max(0, roomData.availableBeds - 1);
+        const updatedRoomData = {
+          ...roomData,
+          [updateField]: Math.max(0, roomData[updateField] - 1),
+          availableBeds: nextAvailableBeds,
+          roomStatus: nextAvailableBeds === 0 ? 'unavailable' : roomData.roomStatus
+        };
+        cache.set(roomMetaCacheKey, updatedRoomData, 300);
       }
 
-      const reservedRoom = await Room.findOneAndUpdate(
-        { _id: roomId, [updateField]: { $gt: 0 }, roomStatus: 'available' },
-        updatePayload,
-        { new: true, session, lean: true } // Removed the array, using standard object!
-      );
+      const totalDuration = Date.now() - tStart;
+      console.log(`BOOKING_PERF: Total=${totalDuration}ms | Check=${dCheck}ms | Data=${dData}ms | Tx=${dTx}ms | Resp=${dResp}ms`);
+      logLifecycleEvent('booking_created', { bookingId: newBooking._id, duration: totalDuration });
+    });
 
-      if (!reservedRoom) throw new Error('Sold out or room unavailable.');
+    return res.status(201).json(finalResponse);
 
-      const [newBooking] = await Booking.create([{
-        student: studentId,
-        history: [{ event: 'BOOKING_CREATED', details: 'Student initiated booking request', actor: studentId }],
-        room: roomId,
-        hostel: roomData.hostel._id,
-        bookingCode,
-        amount: breakdown.totalPaid,
-        ...breakdown,
-        checkInDate,
-        expiresAt,
-        studentPhone: studentUser.phone,
-        studentIdCard: studentUser.studentId,
-        studentUniversity: studentUser.customUniversity || (studentUser.university ? studentUser.university.name : studentUser.schoolName),
-        refundPolicyAccepted: true,
-        refundPolicyAcceptedAt: new Date(),
-      }], { session });
-
-      await session.commitTransaction();
-      session.endSession();
-      const dTx = Date.now() - tTxStart;
-
-      // 6. RESPONSE SYNTHESIS (Zero-Query Finalization)
-      const tRespStart = Date.now();
-      const bookingObj = newBooking.toObject();
-      
-      const responseData = {
-        success: true,
-        message: 'Booking created successfully',
-        booking: {
-          ...bookingObj,
-          room: roomData, // Already in memory
-          hostel: roomData.hostel, // Already in memory
-          student: {
-            _id: req.user._id,
-            name: req.user.name,
-            email: req.user.email,
-            phone: req.user.phone,
-            gender: req.user.gender
-          }
-        }
-      };
-      
-      const finalResponse = {
-        ...responseData,
-        ...responseData.booking,
-        bookingId: responseData.booking._id,
-        totalAmount: responseData.booking.totalPaid,
-        data: responseData.booking
-      };
-      const dResp = Date.now() - tRespStart;
-
-      // 7. BACKGROUND PROCESSES
-      setImmediate(() => {
-        syncHostelAvailability(roomData.hostel._id).catch(() => {});
-        
-        // Update cache in-memory to prevent immediate DB hit on next request
-        if (roomData) {
-          const nextAvailableBeds = Math.max(0, roomData.availableBeds - 1);
-          const updatedRoomData = {
-            ...roomData,
-            [updateField]: Math.max(0, roomData[updateField] - 1),
-            availableBeds: nextAvailableBeds,
-            roomStatus: nextAvailableBeds === 0 ? 'unavailable' : roomData.roomStatus
-          };
-          cache.set(roomMetaCacheKey, updatedRoomData, 300);
-        }
-
-        const totalDuration = Date.now() - tStart;
-        console.log(`BOOKING_PERF: Total=${totalDuration}ms | Check=${dCheck}ms | Data=${dData}ms | Tx=${dTx}ms | Resp=${dResp}ms`);
-        logLifecycleEvent('booking_created', { bookingId: newBooking._id, duration: totalDuration });
-      });
-
-      return res.status(201).json(finalResponse);
-
-    } catch (error) {
-      if (session.inTransaction()) await session.abortTransaction();
-      session.endSession();
-      console.error('BOOKING_ERROR:', error.message);
-      return sendError(res, error.message || 'Booking failed.', 400);
-    }
   });
 
 /* =========================================

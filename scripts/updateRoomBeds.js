@@ -18,9 +18,9 @@ const updateRoom = async () => {
     if (!room.occupancyStyle) room.occupancyStyle = '1-in-1';
     if (room.billingPeriod === 'academic-year') room.billingPeriod = 'academic year';
 
-    room.capacity = 500; // Increase capacity to allow for more beds
-    room.maleAvailableBeds = 100;
-    room.femaleAvailableBeds = 100;
+    room.capacity = 2; 
+    room.maleAvailableBeds = 1;
+    room.femaleAvailableBeds = 1;
     room.roomStatus = 'available';
     
     await room.save();

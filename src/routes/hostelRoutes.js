@@ -11,6 +11,7 @@ const {
   getActiveUniversities,
   updateHostel,
   deleteHostel,
+  getSearchSuggestions,
 } = require('../controllers/hostelController');
 
 const {
@@ -74,6 +75,12 @@ router.get(
     keyBuilder: (req) => createHostelSearchCacheKey(req.query),
   }),
   getHostels
+);
+
+// Get search suggestions
+router.get(
+  '/search-suggestions',
+  getSearchSuggestions
 );
 
 // Get single hostel
