@@ -264,15 +264,32 @@ app.use(errorHandler);
 /* =========================================
    START SERVER
 ========================================= */
-const { startPayoutWorker } = require('./src/workers/payoutWorker');
-const { startReservationExpiryWorker } = require('./src/workers/reservationExpiryWorker');
-const { startCommunicationWorker } = require('./src/workers/communicationWorker');
+const cron = require('node-cron');
+const { cleanupExpiredReservations } = require('./src/utils/bookingLifecycle');
+const { processPendingPayouts } = require('./src/services/payoutService');
 
 const PORT = process.env.PORT || 5000;
 server.listen(PORT, '0.0.0.0', () => {
     console.log(`Server running in ${process.env.NODE_ENV || 'development'} mode on port ${PORT}`);
-    startPayoutWorker();
-    startReservationExpiryWorker();
-    startCommunicationWorker();
-});
+    
+    // Start lightweight background cron schedules instead of heavy Redis workers
+    cron.schedule('*/5 * * * *', async () => {
+      try {
+        const expiredCount = await cleanupExpiredReservations();
+        if (expiredCount > 0) {
+          console.log(`[CRON] Cleaned up ${expiredCount} expired reservations`);
+        }
+      } catch (err) {
+        console.error('[CRON ERROR] Booking cleanup failed:', err.message);
+      }
+    });
 
+    cron.schedule('*/15 * * * *', async () => {
+      try {
+        await processPendingPayouts();
+        console.log('[CRON] Payout check completed');
+      } catch (err) {
+        console.error('[CRON ERROR] Payout check failed:', err.message);
+      }
+    });
+});

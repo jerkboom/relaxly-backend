@@ -23,9 +23,9 @@ const registerUser = asyncHandler(
       governmentIdUrl, university, customUniversity, studentId } = req.body;
 
     // 1. HARD VALIDATION: Required Fields for everyone
-    if (!name || !email || !password) {
+    if (!name || !email || !password || !phone) {
       res.status(400);
-      throw new Error('Please provide all required fields (name, email, password).');
+      throw new Error('Please provide all required fields (name, email, password, phone).');
     }
 
     // 2. DUPLICATE CHECK: Prevent double registration
@@ -33,6 +33,14 @@ const registerUser = asyncHandler(
     if (existingUser) {
       res.status(400);
       throw new Error('An account already exists for this email.');
+    }
+
+    if (phone) {
+      const existingPhone = await User.findOne({ phone: phone.trim() });
+      if (existingPhone) {
+        res.status(400);
+        throw new Error('An account already exists with this phone number.');
+      }
     }
 
     // 3. ROLE-SPECIFIC SECURITY VALIDATION

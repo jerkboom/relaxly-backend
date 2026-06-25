@@ -88,10 +88,10 @@ const createHostel = asyncHandler(async (req, res) => {
     // Remove duplicates and ensure primary isn't in nearby
     data.nearbyUniversities = [...new Set(data.nearbyUniversities)]
       .filter(u => u !== data.nearestUniversity)
-      .slice(0, 4);
+      .slice(0, 10);
     
-    if (data.nearbyUniversities.length > 4) {
-      return sendError(res, 'You can select a maximum of 4 nearby universities.', 400);
+    if (data.nearbyUniversities.length > 10) {
+      return sendError(res, 'You can select a maximum of 10 nearby universities.', 400);
     }
   }
 
@@ -577,10 +577,10 @@ const updateHostel = asyncHandler(async (req, res) => {
     // Remove duplicates and ensure primary isn't in nearby
     data.nearbyUniversities = [...new Set(data.nearbyUniversities)]
       .filter(u => u !== effectiveNearestUniversity)
-      .slice(0, 4);
+      .slice(0, 10);
     
-    if (data.nearbyUniversities.length > 4) {
-      return sendError(res, 'You can select a maximum of 4 nearby universities.', 400);
+    if (data.nearbyUniversities.length > 10) {
+      return sendError(res, 'You can select a maximum of 10 nearby universities.', 400);
     }
   }
 
@@ -710,7 +710,7 @@ const getSearchSuggestions = asyncHandler(async (req, res) => {
     const queryLower = q.trim().toLowerCase();
     const cacheKey = `suggestions:${queryLower}`;
 
-    // 1. Check Backend Cache First
+    // 1. Check Backend Cache First for search suggestions result
     const cachedSuggestions = cache.get(cacheKey);
     if (cachedSuggestions) {
       return sendSuccess(res, { suggestions: cachedSuggestions }, 'Suggestions retrieved from cache');
@@ -718,79 +718,88 @@ const getSearchSuggestions = asyncHandler(async (req, res) => {
 
     const queryAliases = getUniversityAliases(queryLower).map(a => a.toLowerCase());
 
-    // 2. Fetch approved and available hostels, projecting only fields required for autocomplete
-    const hostels = await Hostel.find({
-      verificationStatus: 'approved',
-      available: true
-    })
-    .select('name location nearestUniversity nearbyUniversities')
-    .lean();
+    // 2. Retrieve compiled global candidates list from cache or build it
+    const globalCandidatesKey = 'suggestions:global_candidates';
+    let globalCandidates = cache.get(globalCandidatesKey);
 
+    if (!globalCandidates) {
+      // Build candidates array once from all available and approved hostels (projecting minimal search fields)
+      const hostels = await Hostel.find({
+        verificationStatus: 'approved',
+        available: true
+      })
+      .select('name location nearestUniversity nearbyUniversities')
+      .lean();
 
+      const candidatesMap = new Map();
 
-    const candidates = new Map();
-
-    hostels.forEach(hostel => {
-      // 1. Hostel Name
-      if (hostel.name) {
-        const nameTrimmed = hostel.name.trim();
-        const key = `hostel:${nameTrimmed.toLowerCase()}`;
-        if (!candidates.has(key)) {
-          candidates.set(key, { type: 'hostel', name: nameTrimmed });
-        }
-      }
-
-      // 2. Location details (City, Region, Address)
-      if (hostel.location) {
-        const { address, city, region } = hostel.location;
-        if (address) {
-          const val = address.trim();
-          const key = `location:${val.toLowerCase()}`;
-          if (!candidates.has(key)) {
-            candidates.set(key, { type: 'location', name: val });
+      hostels.forEach(hostel => {
+        // 1. Hostel Name
+        if (hostel.name) {
+          const nameTrimmed = hostel.name.trim();
+          const key = `hostel:${nameTrimmed.toLowerCase()}`;
+          if (!candidatesMap.has(key)) {
+            candidatesMap.set(key, { type: 'hostel', name: nameTrimmed });
           }
         }
-        if (city) {
-          const val = city.trim();
-          const key = `location:${val.toLowerCase()}`;
-          if (!candidates.has(key)) {
-            candidates.set(key, { type: 'location', name: val });
-          }
-        }
-        if (region) {
-          const val = region.trim();
-          const key = `location:${val.toLowerCase()}`;
-          if (!candidates.has(key)) {
-            candidates.set(key, { type: 'location', name: val });
-          }
-        }
-      }
 
-      // 3. University details (Nearest and Nearby)
-      if (hostel.nearestUniversity) {
-        const val = hostel.nearestUniversity.trim();
-        const key = `location:${val.toLowerCase()}`;
-        if (!candidates.has(key)) {
-          candidates.set(key, { type: 'location', name: val });
-        }
-      }
-
-      if (Array.isArray(hostel.nearbyUniversities)) {
-        hostel.nearbyUniversities.forEach(uni => {
-          if (uni) {
-            const val = uni.trim();
+        // 2. Location details (City, Region, Address)
+        if (hostel.location) {
+          const { address, city, region } = hostel.location;
+          if (address) {
+            const val = address.trim();
             const key = `location:${val.toLowerCase()}`;
-            if (!candidates.has(key)) {
-              candidates.set(key, { type: 'location', name: val });
+            if (!candidatesMap.has(key)) {
+              candidatesMap.set(key, { type: 'location', name: val });
             }
           }
-        });
-      }
-    });
+          if (city) {
+            const val = city.trim();
+            const key = `location:${val.toLowerCase()}`;
+            if (!candidatesMap.has(key)) {
+              candidatesMap.set(key, { type: 'location', name: val });
+            }
+          }
+          if (region) {
+            const val = region.trim();
+            const key = `location:${val.toLowerCase()}`;
+            if (!candidatesMap.has(key)) {
+              candidatesMap.set(key, { type: 'location', name: val });
+            }
+          }
+        }
+
+        // 3. University details (Nearest and Nearby)
+        if (hostel.nearestUniversity) {
+          const val = hostel.nearestUniversity.trim();
+          const key = `location:${val.toLowerCase()}`;
+          if (!candidatesMap.has(key)) {
+            candidatesMap.set(key, { type: 'location', name: val });
+          }
+        }
+
+        if (Array.isArray(hostel.nearbyUniversities)) {
+          hostel.nearbyUniversities.forEach(uni => {
+            if (uni) {
+              const val = uni.trim();
+              const key = `location:${val.toLowerCase()}`;
+              if (!candidatesMap.has(key)) {
+                candidatesMap.set(key, { type: 'location', name: val });
+              }
+            }
+          });
+        }
+      });
+
+      globalCandidates = Array.from(candidatesMap.values());
+      // Cache global candidates list for 15 minutes
+      cache.set(globalCandidatesKey, globalCandidates, 900);
+    }
 
     const scoredCandidates = [];
 
-    for (const candidate of candidates.values()) {
+    // 3. Perform in-memory search and fuzzy matching on the global candidates list
+    for (const candidate of globalCandidates) {
       const nameLower = candidate.name.toLowerCase();
       let score = 0;
 
@@ -847,9 +856,7 @@ const getSearchSuggestions = asyncHandler(async (req, res) => {
       name: item.name
     }));
 
-
-
-    // 3. Cache the calculated suggestions for 5 minutes (300 seconds)
+    // Cache the calculated suggestions for 5 minutes (300 seconds)
     cache.set(cacheKey, suggestions, 300);
 
     sendSuccess(res, { suggestions }, 'Suggestions retrieved successfully');

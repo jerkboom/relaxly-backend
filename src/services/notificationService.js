@@ -8,6 +8,86 @@ const SmsLog = require('../models/SmsLog');
 const CommunicationQueue = require('../models/CommunicationQueue');
 const MessageTemplate = require('../models/MessageTemplate');
 const socketManager = require('../utils/socketManager');
+const sendEmail = require('../utils/sendEmail');
+const smsService = require('../utils/smsService');
+
+const compileTemplate = (body, userObj) => {
+  if (!userObj) userObj = {};
+  return body.replace(/{{name}}/g, userObj.name || 'User')
+             .replace(/{{email}}/g, userObj.email || '')
+             .replace(/{{role}}/g, userObj.role || '');
+};
+
+const processCommunicationTask = async (taskId) => {
+  const task = await CommunicationQueue.findById(taskId);
+  if (!task) return;
+
+  // Prevent duplicate execution
+  if (task.status === 'PROCESSING' || task.status === 'COMPLETED') return;
+
+  task.status = 'PROCESSING';
+  await task.save();
+
+  try {
+    let result;
+    const { payload, user, campaign } = task;
+
+    if (task.channel === 'APP') {
+      result = await notificationService.createNotification({
+        user, title: payload.title, message: payload.message, type: 'admin', data: payload.data
+      });
+      await DeliveryLog.create({ campaign, user, channel: 'APP', status: 'DELIVERED', sentAt: new Date() });
+    } else if (task.channel === 'EMAIL') {
+      const body = compileTemplate(payload.body, payload.userObj);
+      
+      let emailLog = await EmailLog.create({ campaign, user, email: payload.email, subject: payload.subject, status: 'PENDING' });
+      const trackingPixel = `<img src="${process.env.APP_URL || 'http://localhost:5000'}/api/notifications/track/email/${emailLog._id}" width="1" height="1" />`;
+      const finalBody = body + trackingPixel;
+
+      result = await sendEmail({ email: payload.email, subject: payload.subject, message: finalBody });
+      
+      emailLog.status = 'SENT';
+      emailLog.sentAt = new Date();
+      emailLog.messageId = result.messageId;
+      await emailLog.save();
+      await DeliveryLog.create({ campaign, user, channel: 'EMAIL', status: 'SENT', sentAt: new Date() });
+    } else if (task.channel === 'SMS') {
+      const body = compileTemplate(payload.body, payload.userObj);
+      let smsLog = await SmsLog.create({ campaign, user, phone: payload.phone, message: body, status: 'PENDING' });
+      
+      result = await smsService.sendSMS({ to: payload.phone, message: body });
+      
+      smsLog.status = 'SENT';
+      smsLog.sentAt = new Date();
+      smsLog.messageId = result.messageId;
+      await smsLog.save();
+      await DeliveryLog.create({ campaign, user, channel: 'SMS', status: 'SENT', sentAt: new Date() });
+    }
+
+    task.status = 'COMPLETED';
+    await task.save();
+    
+    if (task.campaign) {
+      await notificationService._updateCampaignStats(task.campaign);
+    }
+  } catch (error) {
+    task.attempts += 1;
+    task.errorLogs.push(error.message);
+    task.status = 'FAILED';
+    await task.save();
+    
+    await DeliveryLog.create({ 
+      campaign: task.campaign, 
+      user: task.user, 
+      channel: task.channel, 
+      status: 'FAILED', 
+      errorMessage: error.message, 
+      sentAt: new Date() 
+    });
+
+    throw error;
+  }
+};
 
 const notificationService = {
   createNotification: async ({ user, title, message, type = 'system', data = {} }) => {
@@ -97,7 +177,16 @@ const notificationService = {
     }
 
     if (queueItems.length > 0) {
-      await CommunicationQueue.insertMany(queueItems);
+      const docs = await CommunicationQueue.insertMany(queueItems);
+      for (const doc of docs) {
+        setImmediate(async () => {
+          try {
+            await processCommunicationTask(doc._id);
+          } catch (err) {
+            console.error(`[Communication Background Error] Task ${doc._id} failed:`, err.message);
+          }
+        });
+      }
     }
   },
 
@@ -142,7 +231,16 @@ const notificationService = {
     }
 
     if (queueItems.length > 0) {
-      await CommunicationQueue.insertMany(queueItems);
+      const docs = await CommunicationQueue.insertMany(queueItems);
+      for (const doc of docs) {
+        setImmediate(async () => {
+          try {
+            await processCommunicationTask(doc._id);
+          } catch (err) {
+            console.error(`[Communication Background Error] Task ${doc._id} failed:`, err.message);
+          }
+        });
+      }
     }
     return { success: true, queuedCount: queueItems.length };
   },

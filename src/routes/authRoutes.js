@@ -46,6 +46,13 @@ router.post(
         'Password must be at least 6 characters'
       ),
 
+    body('phone')
+      .trim()
+      .notEmpty()
+      .withMessage('Phone number is required')
+      .matches(/^(?:\+233|0)[2-5]\d{8}$/)
+      .withMessage('Please enter a valid Ghana phone number (e.g. 0241234567 or +233241234567)'),
+
     body('role')
       .optional()
       .custom((value) => {

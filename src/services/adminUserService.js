@@ -114,11 +114,9 @@ class AdminUserService {
       .sort({ createdAt: -1 });
 
     // 2. Fetch Payments & Potential Refunds (Transactions)
+    const bookingIds = bookings.map(b => b._id);
     const transactions = await TransactionLedger.find({ 
-      $or: [
-        { sender: user._id },
-        { recipient: user._id }
-      ]
+      booking: { $in: bookingIds }
     }).sort({ createdAt: -1 });
 
     const payments = transactions.filter(t => t.type === 'payment' || t.type === 'booking_fee');
@@ -186,17 +184,17 @@ class AdminUserService {
   }
 
   async getStudentsForAdmin(search) {
-    let query = { role: 'student' };
+    let matchQuery = { role: 'student' };
     
     if (search) {
       // Find students whose room assignment matches
       const matchedBookings = await Booking.find({ 
         assignedRoomNumber: { $regex: search, $options: 'i' } 
-      }, 'student');
+      }, 'student').lean();
       
       const studentIdsByRoom = matchedBookings.map(b => b.student);
 
-      query.$or = [
+      matchQuery.$or = [
         { name: { $regex: search, $options: 'i' } },
         { email: { $regex: search, $options: 'i' } },
         { studentId: { $regex: search, $options: 'i' } },
@@ -204,58 +202,123 @@ class AdminUserService {
       ];
     }
 
-    const students = await User.find(query)
-      .populate({ path: 'university', select: 'name' })
-      .sort({ createdAt: -1 });
+    const pipeline = [
+      { $match: matchQuery },
+      {
+        $lookup: {
+          from: 'universities',
+          localField: 'university',
+          foreignField: '_id',
+          as: 'universityData'
+        }
+      },
+      {
+        $lookup: {
+          from: 'bookings',
+          let: { studentId: '$_id' },
+          pipeline: [
+            { $match: { $expr: { $eq: ['$student', '$$studentId'] } } },
+            { $count: 'count' }
+          ],
+          as: 'bookingCountData'
+        }
+      },
+      {
+        $project: {
+          _id: 1,
+          name: 1,
+          email: 1,
+          phone: 1,
+          studentId: 1,
+          customUniversity: 1,
+          universityName: { $arrayElemAt: ['$universityData.name', 0] },
+          schoolName: 1,
+          bookingCount: { $ifNull: [ { $arrayElemAt: ['$bookingCountData.count', 0] }, 0 ] },
+          createdAt: 1,
+          accountStatus: 1
+        }
+      },
+      { $sort: { createdAt: -1 } }
+    ];
 
-    const studentData = await Promise.all(students.map(async (student) => {
-      const bookingCount = await Booking.countDocuments({ student: student._id });
-      return {
-        _id: student._id,
-        name: student.name,
-        email: student.email,
-        phone: student.phone || 'N/A',
-        studentId: student.studentId || 'N/A',
-        university: student.customUniversity || (student.university && student.university.name ? student.university.name : (student.schoolName || 'N/A')),
-        bookingCount,
-        createdAt: student.createdAt,
-        status: student.accountStatus
-      };
+    const results = await User.aggregate(pipeline);
+
+    return results.map(student => ({
+      _id: student._id,
+      name: student.name,
+      email: student.email,
+      phone: student.phone || 'N/A',
+      studentId: student.studentId || 'N/A',
+      university: student.customUniversity || student.universityName || student.schoolName || 'N/A',
+      bookingCount: student.bookingCount,
+      createdAt: student.createdAt,
+      status: student.accountStatus
     }));
-
-    return studentData;
   }
 
   async getOwnersForAdmin() {
-    const owners = await User.find({ role: 'owner' }).sort({ createdAt: -1 });
+    const pipeline = [
+      { $match: { role: 'owner' } },
+      {
+        $lookup: {
+          from: 'hostels',
+          localField: '_id',
+          foreignField: 'owner',
+          as: 'hostelData'
+        }
+      },
+      {
+        $lookup: {
+          from: 'bookings',
+          let: { hostelIds: '$hostelData._id' },
+          pipeline: [
+            {
+              $match: {
+                $and: [
+                  { $expr: { $in: ['$hostel', '$$hostelIds'] } },
+                  { paymentStatus: 'paid' }
+                ]
+              }
+            },
+            {
+              $group: {
+                _id: null,
+                totalEarnings: { $sum: '$ownerAmount' }
+              }
+            }
+          ],
+          as: 'earningsData'
+        }
+      },
+      {
+        $project: {
+          _id: 1,
+          name: 1,
+          email: 1,
+          phone: 1,
+          hostelCount: { $size: '$hostelData' },
+          earnings: { $ifNull: [{ $arrayElemAt: ['$earningsData.totalEarnings', 0] }, 0] },
+          verificationStatus: 1,
+          createdAt: 1,
+          accountStatus: 1
+        }
+      },
+      { $sort: { createdAt: -1 } }
+    ];
 
-    const ownerData = await Promise.all(owners.map(async (owner) => {
-      const hostelCount = await Hostel.countDocuments({ owner: owner._id });
-      
-      const hostels = await Hostel.find({ owner: owner._id }, '_id');
-      const hostelIds = hostels.map(h => h._id);
-      
-      const paidBookings = await Booking.find({ 
-        hostel: { $in: hostelIds }, 
-        paymentStatus: 'paid' 
-      });
-      
-      const totalEarnings = paidBookings.reduce((sum, b) => sum + (b.ownerAmount || 0), 0);
+    const results = await User.aggregate(pipeline);
 
-      return {
-        _id: owner._id,
-        name: owner.name,
-        email: owner.email,
-        phone: owner.phone,
-        hostelCount,
-        earnings: totalEarnings,
-        verificationStatus: owner.verificationStatus,
-        joinedDate: owner.createdAt,
-        status: owner.accountStatus
-      };
+    return results.map(owner => ({
+      _id: owner._id,
+      name: owner.name,
+      email: owner.email,
+      phone: owner.phone,
+      hostelCount: owner.hostelCount,
+      earnings: owner.earnings,
+      verificationStatus: owner.verificationStatus,
+      joinedDate: owner.createdAt,
+      status: owner.accountStatus
     }));
-
-    return ownerData;
   }
 }
 

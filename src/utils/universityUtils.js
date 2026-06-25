@@ -34,16 +34,68 @@ const UNIVERSITIES = [
     aliases: ["uhas", "university of health and allied sciences", "health allied"]
   },
   {
+    name: "Ghana Institute of Management and Public Administration (GIMPA)",
+    aliases: ["gimpa", "ghana institute of management and public administration"]
+  },
+  {
     name: "Ashesi University",
     aliases: ["ashesi", "ashesi university"]
+  },
+  {
+    name: "Academic City University",
+    aliases: ["academic city", "academic city university", "acity"]
+  },
+  {
+    name: "Central University",
+    aliases: ["central university", "central"]
   },
   {
     name: "Wisconsin International University College",
     aliases: ["wisconsin", "wisconsin university", "wisconsin international"]
   },
   {
+    name: "Lancaster University Ghana",
+    aliases: ["lancaster", "lancaster university", "lancaster ghana"]
+  },
+  {
+    name: "Ghana Communication Technology University (GCTU)",
+    aliases: ["gctu", "ghana communication technology", "telecom university", "gict"]
+  },
+  {
     name: "Valley View University",
     aliases: ["vvu", "valley view"]
+  },
+  {
+    name: "Methodist University",
+    aliases: ["methodist", "methodist university"]
+  },
+  {
+    name: "Presbyterian University",
+    aliases: ["presbyterian", "presbyterian university"]
+  },
+  {
+    name: "Catholic University",
+    aliases: ["catholic", "catholic university"]
+  },
+  {
+    name: "Regent University College",
+    aliases: ["regent", "regent university"]
+  },
+  {
+    name: "Pentecost University",
+    aliases: ["pentecost", "pentecost university"]
+  },
+  {
+    name: "Garden City University",
+    aliases: ["garden city", "garden city university"]
+  },
+  {
+    name: "BlueCrest University",
+    aliases: ["bluecrest", "bluecrest university"]
+  },
+  {
+    name: "Ghana Christian University College",
+    aliases: ["christian university", "ghana christian"]
   },
   {
     name: "Accra Technical University (ATU)",
@@ -84,6 +136,22 @@ const UNIVERSITIES = [
   {
     name: "Wa Technical University (WTU)",
     aliases: ["wtu", "wa technical university"]
+  },
+  {
+    name: "Korle-Bu Nursing and Midwifery Training College",
+    aliases: ["korle bu nursing", "korle-bu nursing", "nursing training korle bu"]
+  },
+  {
+    name: "37 Military Hospital Nursing Training College",
+    aliases: ["37 nursing", "37 military nursing"]
+  },
+  {
+    name: "Kumasi Nursing and Midwifery Training College",
+    aliases: ["kumasi nursing"]
+  },
+  {
+    name: "Accra College of Education",
+    aliases: ["accra college of education", "accra coe"]
   }
 ];
 

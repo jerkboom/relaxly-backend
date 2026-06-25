@@ -36,6 +36,7 @@ const getStudentDashboard =
         await Booking.find({
           student: studentId,
         })
+          .select('bookingStatus paymentStatus amount createdAt hostel room')
           .populate(
             'hostel',
             'name location'
@@ -46,7 +47,8 @@ const getStudentDashboard =
           )
           .sort({
             createdAt: -1,
-          });
+          })
+          .lean();
 
       // STATS
       const totalBookings =
@@ -120,7 +122,9 @@ const getOwnerDashboard =
       const hostels =
         await Hostel.find({
           owner: ownerId,
-        });
+        })
+          .select('_id')
+          .lean();
 
       const hostelIds = hostels.map(
         (h) => h._id
@@ -132,7 +136,9 @@ const getOwnerDashboard =
       // 2. GET ALL ROOMS IN THESE HOSTELS
       const rooms = await Room.find({
         hostel: { $in: hostelIds },
-      });
+      })
+        .select('capacity availableBeds')
+        .lean();
 
       const totalRooms = rooms.length;
 
@@ -164,21 +170,33 @@ const getOwnerDashboard =
             )
           : 0;
 
-      // 4. BOOKING STATS & REVENUE
-      const allBookings = await Booking.find({
-        hostel: { $in: hostelIds },
-      });
+      // 4. BOOKING STATS & REVENUE (Database Aggregation)
+      const bookingStats = await Booking.aggregate([
+        { $match: { hostel: { $in: hostelIds } } },
+        {
+          $group: {
+            _id: null,
+            totalBookings: { $sum: 1 },
+            earnings: {
+              $sum: {
+                $cond: [
+                  {
+                    $and: [
+                      { $eq: ['$paymentStatus', 'paid'] },
+                      { $eq: ['$bookingStatus', 'approved'] }
+                    ]
+                  },
+                  { $ifNull: ['$ownerAmount', 0] },
+                  0
+                ]
+              }
+            }
+          }
+        }
+      ]);
 
-      const totalBookings = allBookings.length;
-
-      // Earnings: only paid bookings that are approved
-      const earnings = allBookings
-        .filter(
-          (booking) =>
-            booking.paymentStatus === 'paid' &&
-            booking.bookingStatus === 'approved'
-        )
-        .reduce((sum, booking) => sum + (booking.ownerAmount || 0), 0);
+      const totalBookings = bookingStats[0]?.totalBookings || 0;
+      const earnings = bookingStats[0]?.earnings || 0;
 
       // 5. NOTIFICATIONS
       const notificationsCount =
@@ -192,6 +210,7 @@ const getOwnerDashboard =
         await Booking.find({
           hostel: { $in: hostelIds },
         })
+          .select('student room hostel createdAt bookingStatus paymentStatus amount bookingCode')
           .populate(
             'student',
             'name email'
@@ -205,12 +224,39 @@ const getOwnerDashboard =
             'name'
           )
           .sort({ createdAt: -1 })
-          .limit(5);
+          .limit(5)
+          .lean();
 
-            // 7. PAYOUT STATS
-      const payouts = await PayoutQueue.find({ owner: ownerId });
-      const pendingPayouts = payouts.filter(p => ['pending', 'approved', 'processing', 'otp_pending'].includes(p.status)).reduce((sum, p) => sum + (p.finalTransferAmount || 0), 0);
-      const paidPayouts = payouts.filter(p => p.status === 'paid').reduce((sum, p) => sum + (p.finalTransferAmount || 0), 0);
+      // 7. PAYOUT STATS (Database Aggregation)
+      const payoutStats = await PayoutQueue.aggregate([
+        { $match: { owner: ownerId } },
+        {
+          $group: {
+            _id: null,
+            pendingPayouts: {
+              $sum: {
+                $cond: [
+                  { $in: ['$status', ['pending', 'approved', 'processing', 'otp_pending']] },
+                  { $ifNull: ['$finalTransferAmount', 0] },
+                  0
+                ]
+              }
+            },
+            paidPayouts: {
+              $sum: {
+                $cond: [
+                  { $eq: ['$status', 'paid'] },
+                  { $ifNull: ['$finalTransferAmount', 0] },
+                  0
+                ]
+              }
+            }
+          }
+        }
+      ]);
+
+      const pendingPayouts = payoutStats[0]?.pendingPayouts || 0;
+      const paidPayouts = payoutStats[0]?.paidPayouts || 0;
 
       // 8. LIVE BALANCE CALCULATION
       // Total earnings from all paid+approved bookings MINUS what has already been sent to bank (paidPayouts)

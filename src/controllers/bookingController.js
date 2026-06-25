@@ -14,6 +14,7 @@ const {
   logLifecycleEvent,
   syncHostelAvailability,
   restoreRoomBed,
+  cleanupExpiredReservations,
 } = require('../utils/bookingLifecycle');
 
 const {
@@ -98,6 +99,12 @@ const createBooking =
 
     // 3. CACHE/FETCH DATA
     const tDataStart = Date.now();
+
+    // Real-time cleanup of expired bookings for this room to free up beds
+    await cleanupExpiredReservations({ room: roomId }).catch((err) => {
+      console.error('[CLEANUP ERROR] Failed to release expired beds:', err.message);
+    });
+
     const settings = cache.get('platform_settings') || await PlatformSettings.getSettings().then(s => { cache.set('platform_settings', s, 1800); return s; });
     
     const roomMetaCacheKey = `room_meta_${roomId}`;
@@ -241,6 +248,8 @@ const createBooking =
         cache.set(roomMetaCacheKey, updatedRoomData, 300);
       }
 
+
+
       const totalDuration = Date.now() - tStart;
       console.log(`BOOKING_PERF: Total=${totalDuration}ms | Check=${dCheck}ms | Data=${dData}ms | Tx=${dTx}ms | Resp=${dResp}ms`);
       logLifecycleEvent('booking_created', { bookingId: newBooking._id, duration: totalDuration });
@@ -380,22 +389,38 @@ const getBookingById =
 ========================================= */
 const getBookings =
   asyncHandler(async (req, res) => {
-    const bookings =
-      await Booking.find()
-        .populate(
-          'student',
-          'name email'
-        )
-        .populate('room', 'roomType price occupancyStyle')
-        .populate(
-          'hostel',
-          'name location'
-        )
-        .sort({
-          createdAt: -1,
-        });
+    const page = parseInt(req.query.page, 10) || 1;
+    const limit = parseInt(req.query.limit, 10) || 20;
+    const skip = (page - 1) * limit;
 
-    sendSuccess(res, bookings, 'All bookings retrieved');
+    const query = {};
+    const userRole = req.user.role || 'student';
+    if (userRole !== 'admin' && userRole !== 'super_admin' && !req.admin) {
+      query.student = req.user.id;
+    }
+
+    const total = await Booking.countDocuments(query);
+    const bookings = await Booking.find(query)
+      .select('student room hostel bookingCode bookingStatus paymentStatus amount createdAt expiresAt')
+      .populate('student', 'name email phone')
+      .populate('room', 'roomType price occupancyStyle')
+      .populate('hostel', 'name location')
+      .sort({ createdAt: -1 })
+      .skip(skip)
+      .limit(limit)
+      .lean();
+
+    res.status(200).json({
+      success: true,
+      message: 'Bookings retrieved successfully',
+      total,
+      page,
+      limit,
+      totalPages: Math.ceil(total / limit),
+      bookings,
+      results: bookings,
+      data: bookings
+    });
   });
 
 /* =========================================

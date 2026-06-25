@@ -190,9 +190,16 @@ const getRooms = asyncHandler(async (req, res) => {
   const { hostelId } = req.query;
   const filter = hostelId ? { hostel: hostelId } : {};
   
-  const rooms = await Room.find(filter)
+  const query = Room.find(filter)
+    .select('hostel roomType occupancyStyle price totalPrice billingPeriod capacity availableBeds maleAvailableBeds femaleAvailableBeds roomStatus images featuredImage')
     .populate('hostel', '_id name location')
     .sort({ createdAt: -1 });
+
+  if (!hostelId) {
+    query.limit(50);
+  }
+
+  const rooms = await query.lean();
 
   sendSuccess(res, rooms, 'Rooms retrieved successfully');
 });
