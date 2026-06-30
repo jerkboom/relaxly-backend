@@ -31,6 +31,48 @@ const registerUser = asyncHandler(
     // 2. DUPLICATE CHECK: Prevent double registration
     const existingUser = await User.findOne({ email: email.toLowerCase() });
     if (existingUser) {
+      if (!existingUser.isEmailVerified) {
+        const verificationToken = existingUser.generateEmailVerificationToken();
+        await existingUser.save();
+
+        const verificationUrl = `${process.env.FRONTEND_URL}/verify-email/${verificationToken}`;
+        const emailMessage = `
+          <div style="font-family: Arial, sans-serif; max-width: 600px; margin: 0 auto; border: 1px solid #e2e8f0; border-radius: 12px; overflow: hidden;">
+            <div style="background-color: #2563eb; padding: 20px; text-align: center;">
+              <h1 style="color: #ffffff; margin: 0; font-size: 24px;">Relaxly</h1>
+            </div>
+            <div style="padding: 30px; color: #1e293b; line-height: 1.6;">
+              <h2 style="color: #0f172a; margin-top: 0;">Welcome to Relaxly!</h2>
+              <p>Please verify your email address to complete your student registration:</p>
+              <div style="text-align: center; margin: 30px 0;">
+                <a href="${verificationUrl}" style="background-color: #2563eb; color: #ffffff; padding: 14px 24px; text-decoration: none; border-radius: 8px; display: inline-block; font-weight: bold;">Verify Email</a>
+              </div>
+            </div>
+          </div>
+        `;
+
+        // Background task
+        (async () => {
+          try {
+            await sendEmail({ email: existingUser.email, subject: 'Verify your Relaxly email', message: emailMessage });
+            await createNotification({
+              user: existingUser._id,
+              title: 'Verify your account',
+              message: 'A verification email has been sent to your email address.',
+              type: 'account',
+            });
+          } catch (error) {
+            console.error('Background email task failed:', error.message);
+          }
+        })();
+
+        return res.status(409).json({
+          success: false,
+          code: 'EMAIL_NOT_VERIFIED',
+          message: "This email already has an account. We've sent you a new verification email."
+        });
+      }
+
       res.status(400);
       throw new Error('An account already exists for this email.');
     }
@@ -241,11 +283,12 @@ const loginUser = asyncHandler(
 
     // CHECK IF VERIFIED
     if (!user.isEmailVerified) {
-      res.status(401);
-
-      throw new Error(
-        'Please verify your email first'
-      );
+      return res.status(401).json({
+        success: false,
+        code: 'EMAIL_NOT_VERIFIED',
+        message: 'Your account already exists but your email has not been verified.',
+        canResendVerification: true
+      });
     }
 
     // Compare password
@@ -476,20 +519,25 @@ const verifyEmail = asyncHandler(
 
     // Find user
     const user = await User.findOne({
-      emailVerificationToken:
-        hashedToken,
-
-      emailVerificationExpires: {
-        $gt: Date.now(),
-      },
+      emailVerificationToken: hashedToken,
     });
 
     if (!user) {
-      res.status(400);
+      return res.status(400).json({
+        success: false,
+        code: 'VERIFICATION_TOKEN_INVALID',
+        message: 'Invalid verification token.'
+      });
+    }
 
-      throw new Error(
-        'Invalid or expired verification token'
-      );
+    // Check expiration
+    if (user.emailVerificationExpires && user.emailVerificationExpires <= Date.now()) {
+      return res.status(400).json({
+        success: false,
+        code: 'VERIFICATION_TOKEN_EXPIRED',
+        message: 'Your verification link has expired.',
+        email: user.email
+      });
     }
 
     // Verify user
