@@ -772,9 +772,9 @@ const getSearchSuggestions = asyncHandler(async (req, res) => {
         // 3. University details (Nearest and Nearby)
         if (hostel.nearestUniversity) {
           const val = hostel.nearestUniversity.trim();
-          const key = `location:${val.toLowerCase()}`;
+          const key = `university:${val.toLowerCase()}`;
           if (!candidatesMap.has(key)) {
-            candidatesMap.set(key, { type: 'location', name: val });
+            candidatesMap.set(key, { type: 'university', name: val });
           }
         }
 
@@ -782,9 +782,9 @@ const getSearchSuggestions = asyncHandler(async (req, res) => {
           hostel.nearbyUniversities.forEach(uni => {
             if (uni) {
               const val = uni.trim();
-              const key = `location:${val.toLowerCase()}`;
+              const key = `university:${val.toLowerCase()}`;
               if (!candidatesMap.has(key)) {
-                candidatesMap.set(key, { type: 'location', name: val });
+                candidatesMap.set(key, { type: 'university', name: val });
               }
             }
           });

@@ -24,4 +24,19 @@ router.post(
   }
 );
 
+router.post(
+  '/public',
+  upload.array('images', 1),
+  (req, res) => {
+    const imageUrls = req.files.map(
+      (file) => file.path
+    );
+
+    res.status(200).json({
+      message: 'ID uploaded successfully',
+      images: imageUrls,
+    });
+  }
+);
+
 module.exports = router;
