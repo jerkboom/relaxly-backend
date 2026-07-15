@@ -28,7 +28,7 @@ const analyticsEventSchema = new mongoose.Schema({
   // The user who triggered the event (null for guests)
   userId: { type: mongoose.Schema.Types.ObjectId, ref: 'User' },
   // Role of the user at the time of the event
-  role: { type: String, enum: ['student', 'owner', 'admin', 'super_admin', 'finance_admin', 'moderator', 'support_admin', 'guest'], default: 'guest' },
+  role: { type: String, enum: ['student', 'owner', 'admin', 'super_admin', 'finance_admin', 'moderator', 'support_admin', 'marketing_admin', 'guest'], default: 'guest' },
   // Short identifier for the action (e.g., 'PAGE_VIEW', 'HOSTEL_CLICK')
   eventType: { type: String, required: true },
   // The URL or component name where the event occurred

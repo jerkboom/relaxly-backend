@@ -188,7 +188,20 @@ const confirmPayoutOtp = asyncHandler(async (req, res) => {
     throw new Error('OTP is required');
   }
 
-  const result = await payoutService.finalizeTransferOtp(payoutId, otp, req.user.id, req);
+  const payout = await PayoutQueue.findById(payoutId);
+  if (!payout) {
+    res.status(404);
+    throw new Error('Payout record not found');
+  }
+
+  let result;
+  if (payout.payoutType === 'ambassador') {
+    const ambassadorService = require('../services/ambassadorService');
+    result = await ambassadorService.finalizeAmbassadorTransferOtp(payoutId, otp, req.user.id, req);
+  } else {
+    result = await payoutService.finalizeTransferOtp(payoutId, otp, req.user.id, req);
+  }
+
   sendSuccess(res, result, 'Payout OTP verified and transfer completed');
 });
 

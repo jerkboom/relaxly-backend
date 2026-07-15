@@ -2,17 +2,15 @@ const axios = require('axios');
 
 class SMSService {
   async sendSMS({ to, message }) {
-    console.log(`--- SMS SEND START to ${to} ---`);
-    console.log(`Message: ${message}`);
-
     const accountSid = process.env.TWILIO_ACCOUNT_SID;
     const authToken = process.env.TWILIO_AUTH_TOKEN;
     const fromNumber = process.env.TWILIO_PHONE_NUMBER;
 
     if (!accountSid || !authToken || !fromNumber) {
-      console.log('Twilio credentials not found. Mocking SMS success.');
-      return { status: 'success', messageId: 'mock_' + Math.random().toString(36).substr(2, 9) };
+      console.warn('[SMS] Twilio credentials not configured — SMS not sent (mock mode).');
+      return { status: 'mock', messageId: 'mock_' + Math.random().toString(36).substr(2, 9) };
     }
+
 
     try {
       const url = `https://api.twilio.com/2010-04-01/Accounts/${accountSid}/Messages.json`;

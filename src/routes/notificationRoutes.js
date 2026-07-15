@@ -36,7 +36,7 @@ router.delete('/:id', protect, deleteNotification);
 // --- ADMIN BROADCAST CENTER ---
 // All these routes require super_admin or admin roles
 router.use(protect);
-router.use(authorizeAdminRoles('super_admin', 'moderator', 'support_admin', 'admin'));
+router.use(authorizeAdminRoles('super_admin', 'moderator', 'support_admin', 'admin', 'marketing_admin'));
 
 router.get('/admin/stats', getCommunicationStats);
 router.get('/admin/campaigns', getCampaigns);

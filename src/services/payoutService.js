@@ -8,6 +8,7 @@ const PayoutQueue = require('../models/PayoutQueue');
 const { determineEntrySide } = require('../utils/accounting');
 const { logAdminAction } = require('../utils/auditLogger');
 const { createNotification } = require('./notificationService');
+const { runTransactionWithRetry } = require('../utils/transactionHelper');
 
 const PAYSTACK_BASE_URL = 'https://api.paystack.co';
 const MAX_PAYOUT_ATTEMPTS = 5;
@@ -273,50 +274,60 @@ const finalizeTransferOtp = async (payoutId, otp, adminId, req) => {
 
     const transferData = response.data.data;
 
-    // Update payout on success
-    payout.status = 'paid';
-    payout.otpRequired = false;
-    payout.otpVerifiedAt = new Date();
-    payout.processedAt = new Date();
-    payout.paystackTransferCode = transferData.transfer_code;
-    payout.paystackTransferReference = transferData.reference;
-    payout.transferReference = transferData.reference;
-    payout.failureReason = null;
-    await payout.save();
+    // WRAP DATABASE OPERATIONS IN TRANSACTION
+    await runTransactionWithRetry(async (session) => {
+      const sessionPayout = await PayoutQueue.findById(payout._id).session(session).populate('booking');
+      if (!sessionPayout) throw new Error('Payout record not found in session');
 
-    console.log('PAYOUT SUCCESSFUL AFTER OTP: Status moved to paid');
+      sessionPayout.status = 'paid';
+      sessionPayout.otpRequired = false;
+      sessionPayout.otpVerifiedAt = new Date();
+      sessionPayout.processedAt = new Date();
+      sessionPayout.paystackTransferCode = transferData.transfer_code;
+      sessionPayout.paystackTransferReference = transferData.reference;
+      sessionPayout.transferReference = transferData.reference;
+      sessionPayout.failureReason = null;
+      await sessionPayout.save({ session });
 
-    const journalGroup = `jg-pout-otp-success-${payout._id}-${Date.now()}`;
+      console.log('PAYOUT SUCCESSFUL AFTER OTP: Status moved to paid in transaction');
 
-    // BALANCED ACCOUNTING FOR PAYOUT
-    await TransactionLedger.insertMany([
-      {
-        booking: payout.booking._id,
-        type: 'owner_payout_completed',
-        accountCategory: 'liability',
-        amount: payout.finalTransferAmount,
-        direction: 'debit',
-        entrySide: 'debit',
-        journalGroup,
-        status: 'success',
-        reference: transferData.reference,
-        metadata: { info: 'Liability cleared via payout OTP' },
-      },
-      {
-        booking: payout.booking._id,
-        type: 'owner_payout_completed',
-        accountCategory: 'asset',
-        amount: payout.finalTransferAmount,
-        direction: 'credit',
-        entrySide: 'credit',
-        journalGroup,
-        status: 'success',
-        reference: transferData.reference,
-        metadata: { info: 'Cash transferred out via Paystack OTP' },
-      }
-    ]);
+      const journalGroup = `jg-pout-otp-success-${sessionPayout._id}-${Date.now()}`;
 
-    await logAdminAction({ req, actionType: 'PAYOUT_OTP_VERIFIED', targetType: 'PayoutQueue', targetId: payout._id });
+      // BALANCED ACCOUNTING FOR PAYOUT
+      await TransactionLedger.insertMany([
+        {
+          booking: sessionPayout.booking._id,
+          type: 'owner_payout_completed',
+          accountCategory: 'liability',
+          amount: sessionPayout.finalTransferAmount,
+          direction: 'debit',
+          entrySide: 'debit',
+          journalGroup,
+          status: 'success',
+          reference: transferData.reference,
+          metadata: { info: 'Liability cleared via payout OTP' },
+        },
+        {
+          booking: sessionPayout.booking._id,
+          type: 'owner_payout_completed',
+          accountCategory: 'asset',
+          amount: sessionPayout.finalTransferAmount,
+          direction: 'credit',
+          entrySide: 'credit',
+          journalGroup,
+          status: 'success',
+          reference: transferData.reference,
+          metadata: { info: 'Cash transferred out via Paystack OTP' },
+        }
+      ], { session });
+
+      await logAdminAction({ req, actionType: 'PAYOUT_OTP_VERIFIED', targetType: 'PayoutQueue', targetId: sessionPayout._id }, session);
+
+      // Update local variables for notifications to use
+      payout.status = sessionPayout.status;
+      payout.transferReference = sessionPayout.transferReference;
+      payout.finalTransferAmount = sessionPayout.finalTransferAmount;
+    });
     
     // START NOTIFICATION FLOW
     try {

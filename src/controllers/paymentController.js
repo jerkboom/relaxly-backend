@@ -1,4 +1,4 @@
-﻿const mongoose = require('mongoose');
+const mongoose = require('mongoose');
 const socketManager = require('../utils/socketManager');
 const axios = require('axios');
 const crypto = require('crypto');
@@ -10,6 +10,7 @@ const User = require('../models/User');
 const TransactionLedger = require('../models/TransactionLedger');
 const PayoutQueue = require('../models/PayoutQueue');
 const PayoutMethod = require('../models/PayoutMethod');
+const ambassadorService = require('../services/ambassadorService');
 const sendEmail = require('../utils/sendEmail');
 const {
   buildStudentBookingConfirmationEmail,
@@ -25,7 +26,9 @@ const {
 const {
   createNotification,
   createNotifications,
+  notifyAdmins,
 } = require('../services/notificationService');
+const { buildAdminUrl } = require('../utils/adminUrl');
 
 const {
   determineEntrySide,
@@ -338,6 +341,11 @@ const finalizePayment = async (paymentData, eventId, io) => {
         },
         { upsert: true }
       );
+      setImmediate(() => {
+        dispatchOwnerPayoutApprovalNotification(booking._id).catch(err => {
+          console.error('[SELF_HEAL_PAYOUT_NOTIFICATION_ERROR]', err.message);
+        });
+      });
     }
 
     // Ensure booking status is synced even if ledger exists (Self-healing)
@@ -560,8 +568,13 @@ const finalizePayment = async (paymentData, eventId, io) => {
     setImmediate(async () => {
       try {
         await dispatchPaymentNotifications(updatedBooking, reference, journalGroup, io);
+        await dispatchOwnerPayoutApprovalNotification(updatedBooking._id);
+        
+        // Attribute referral booking commission
+        const ambassadorService = require('../services/ambassadorService');
+        await ambassadorService.handleBookingPaymentSuccess(updatedBooking._id);
       } catch (err) {
-        console.error('[NOTIF_ERROR] Payment finalized but notifications failed:', err.message);
+        console.error('[NOTIF_ERROR] Payment finalized but notifications/referrals failed:', err.message);
       }
     });
 
@@ -670,6 +683,59 @@ const dispatchPaymentNotifications = async (booking, reference, journalGroup, io
       status: 'paid',
       paymentStatus: 'paid',
     });
+  }
+};
+
+const dispatchOwnerPayoutApprovalNotification = async (bookingId) => {
+  try {
+    const payout = await PayoutQueue.findOne({ booking: bookingId })
+      .populate('owner', 'name email')
+      .populate('hostel', 'name');
+
+    if (!payout || payout.status !== 'pending') return;
+
+    const ownerName = payout.owner?.name || 'Owner';
+    const hostelName = payout.hostel?.name || 'hostel';
+    const amount = Number(payout.finalTransferAmount || payout.amount || 0).toLocaleString();
+
+    await notifyAdmins({
+      role: 'finance_admin',
+      title: 'New Owner Payout Pending Approval',
+      message: `Payout of GHS ${amount} is pending approval for ${ownerName} after a paid booking at ${hostelName}.`,
+      subject: 'New Owner Payout Pending Approval',
+      idempotencyKey: `owner_payout:${payout._id}:pending`,
+      actionUrl: buildAdminUrl(`/finance/payouts?id=${payout._id}`),
+      actionLabel: 'Review Payout',
+      type: 'finance',
+      data: {
+        payoutId: payout._id,
+        bookingId,
+        ownerId: payout.owner?._id,
+        redirect: `/finance/payouts?id=${payout._id}`
+      }
+    });
+  } catch (err) {
+    console.error('[OWNER_PAYOUT_APPROVAL_NOTIFICATION_ERROR]', err.message);
+  }
+};
+
+const notifyWebhookFailure = async ({ event, error }) => {
+  try {
+    await notifyAdmins({
+      role: 'super_admin',
+      title: 'Payment Webhook Processing Failed',
+      message: `Event: ${event?.event || 'unknown'}\nReference: ${event?.data?.reference || 'N/A'}\nError: ${error.message}`,
+      subject: 'Payment Webhook Processing Failed',
+      idempotencyKey: `paystack_webhook:${event?.id || event?.data?.reference || Date.now()}:failed`,
+      type: 'system',
+      data: {
+        event: event?.event,
+        reference: event?.data?.reference,
+        error: error.message
+      }
+    });
+  } catch (notifyErr) {
+    console.error('[WEBHOOK_FAILURE_NOTIFICATION_ERROR]', notifyErr.message);
   }
 };
 
@@ -1075,8 +1141,23 @@ const paystackWebhook =
             'Webhook processing failed:',
             error.message
           );
+          await notifyWebhookFailure({ event, error });
           // Still return 200 to Paystack so they stop retrying,
           // but we should log the error for manual investigation.
+        }
+      } else if (event.event === 'transfer.success') {
+        try {
+          await ambassadorService.handleTransferSuccessWebhook(event.data);
+        } catch (error) {
+          console.error('Transfer success webhook handling failed:', error.message);
+          await notifyWebhookFailure({ event, error });
+        }
+      } else if (event.event === 'transfer.failed' || event.event === 'transfer.reversed') {
+        try {
+          await ambassadorService.handleTransferFailureWebhook(event.data);
+        } catch (error) {
+          console.error('Transfer failure webhook handling failed:', error.message);
+          await notifyWebhookFailure({ event, error });
         }
       }
 

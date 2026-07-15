@@ -13,6 +13,8 @@ const {
 const { logOwnerActivity } = require('../utils/ownerActivityLogger');
 const { calculateDistance, estimateWalkingTime } = require('../utils/distanceUtils');
 const { normalizeUniversity, getUniversityAliases } = require('../utils/universityUtils');
+const { buildAdminUrl } = require('../utils/adminUrl');
+const adminNotifier = require('../utils/adminNotifier');
 
 
 const transformHostelResponse = (hostel) => {
@@ -104,6 +106,29 @@ const createHostel = asyncHandler(async (req, res) => {
   });
 
   console.log('[DEBUG] Hostel Created successfully. ID:', hostel._id, 'Coords:', hostel.location?.latitude, hostel.location?.longitude);
+
+  // Notify Moderators of Hostel Awaiting Approval
+  const reviewUrl = buildAdminUrl('/hostels');
+  adminNotifier.notifyAdminsOfApproval({
+    targetRole: 'moderator',
+    idempotencyKey: `hostel:${hostel._id}:pending_approval`,
+    subject: 'New Hostel Registration Pending Approval',
+    emailBody: `
+      <div style="font-family: sans-serif; padding: 20px; border: 1px solid #e2e8f0; border-radius: 8px; max-width: 600px; margin: 0 auto;">
+        <h2 style="color: #1e3a8a;">New Hostel Verification Request</h2>
+        <p>Hello,</p>
+        <p>A new hostel <strong>"${hostel.name}"</strong> has been registered on Relaxly and requires moderation review before going live.</p>
+        <p>Location: <strong>${hostel.location?.city || 'Unspecified'}</strong></p>
+        <p>Review and verify this hostel inside the Moderation dashboard.</p>
+        <div style="margin: 20px 0;">
+          ${reviewUrl ? `<a href="${reviewUrl}" style="background-color: #2563eb; color: white; padding: 10px 20px; text-decoration: none; border-radius: 6px; font-weight: bold;">Moderate Hostel</a>` : ''}
+        </div>
+      </div>
+    `,
+    inAppTitle: 'New Hostel Verification Awaiting Review',
+    inAppMessage: `Hostel "${hostel.name}" is pending moderation verification.`,
+    data: { hostelId: hostel._id }
+  }).catch(err => console.error('Failed to dispatch hostel approval email:', err.message));
 
   // LOG ACTIVITY
   await logOwnerActivity({

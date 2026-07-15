@@ -7,13 +7,18 @@ dotenv.config({ path: path.resolve(__dirname, '../../.env') });
 
 const Admin = require('../models/Admin');
 
-const SUPER_ADMIN_EMAIL = 'admin@hostel.com';
-const SUPER_ADMIN_PASSWORD = 'Admin123!';
+const SUPER_ADMIN_EMAIL = process.env.SEED_SUPER_ADMIN_EMAIL;
+const SUPER_ADMIN_PASSWORD = process.env.SEED_SUPER_ADMIN_PASSWORD;
 
 const seedSuperAdmin = async () => {
   try {
     if (!process.env.MONGO_URI) {
       throw new Error('MONGO_URI is not configured');
+    }
+    if (!SUPER_ADMIN_EMAIL || !SUPER_ADMIN_PASSWORD) {
+      throw new Error(
+        'SEED_SUPER_ADMIN_EMAIL and SEED_SUPER_ADMIN_PASSWORD must be set in .env before running this script'
+      );
     }
 
     await mongoose.connect(process.env.MONGO_URI);
@@ -25,7 +30,7 @@ const seedSuperAdmin = async () => {
       return;
     }
 
-    const hashedPassword = await bcrypt.hash(SUPER_ADMIN_PASSWORD, 10);
+    const hashedPassword = await bcrypt.hash(SUPER_ADMIN_PASSWORD, 12);
 
     await Admin.create({
       name: 'Super Admin',
@@ -35,11 +40,11 @@ const seedSuperAdmin = async () => {
       permissions: ['*'],
       isActive: true,
       status: 'active',
-      mustResetPassword: false,
+      mustResetPassword: true,
       mfaEnabled: false,
     });
 
-    console.log('Super admin created successfully');
+    console.log(`Super admin created: ${SUPER_ADMIN_EMAIL}`);
   } catch (error) {
     console.error(error.message);
     process.exitCode = 1;
@@ -49,3 +54,4 @@ const seedSuperAdmin = async () => {
 };
 
 seedSuperAdmin();
+

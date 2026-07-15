@@ -62,7 +62,37 @@ const {
   getCacheStats,
   getCustomUniversities,
   getOwnerTimeline,
+  updateSupportSettings,
+  getAllAmbassadors,
+  approveAmbassador,
+  rejectAmbassador,
+  suspendAmbassador,
+  getAllAmbassadorPayouts,
+  reviewAmbassadorPayout,
+  getAmbassadorCommissionSettings,
+  updateAmbassadorCommissionSettings,
+  getAmbassadorFinanceOverview,
+  getAllReferrals,
+  getAmbassadorTimeline,
+  syncLeaderboard,
+  resetSeason,
+  uploadMarketingAsset,
+  getMarketingAssetsAdmin,
+  updateMarketingAsset,
+  deleteMarketingAsset,
+  getMarketingAssetDownloadLogs,
+  getMarketingAssetsStats,
+  getCampaignTargetPreview,
+  createAmbassadorCampaign,
+  getAmbassadorCampaigns,
+  getAmbassadorCampaignDetail,
+  sendTestCampaignEmail,
+  deleteAmbassadorCampaign,
+  getAdminReferralAnalytics,
+  impersonateAmbassadorDashboard
 } = require('../controllers/adminController');
+
+const { upload } = require('../middleware/uploadMiddleware');
 
 const {
   getTrafficAnalytics,
@@ -89,6 +119,7 @@ router.use('/students', studentRoutes);
 router.get('/settings', authorizeAdminRoles('super_admin', 'finance_admin', 'moderator', 'support_admin'), getPlatformSettings);
 router.put('/settings', authorizeAdminRoles('super_admin'), updatePlatformSettings);
 router.patch('/settings/maintenance', authorizeAdminRoles('super_admin'), updateMaintenanceMode);
+router.put('/platform/support-settings', authorizeAdminRoles('super_admin'), updateSupportSettings);
 
 // USER MANAGEMENT
 router.get('/users', authorizeAdminRoles('super_admin', 'moderator', 'support_admin'), getAllUsers);
@@ -120,6 +151,36 @@ router.get('/moderation/policies', authorizeAdminRoles('super_admin', 'moderator
 router.patch('/hostels/:id/approve', authorizeAdminRoles('super_admin', 'moderator'), approveHostel);
 router.patch('/hostels/:id/reject', authorizeAdminRoles('super_admin', 'moderator'), rejectHostel);
 router.patch('/hostels/:id/suspend', authorizeAdminRoles('super_admin', 'moderator'), suspendHostel);
+
+// AMBASSADOR MANAGEMENT
+router.get('/ambassadors', authorizeAdminRoles('super_admin', 'finance_admin', 'moderator', 'support_admin', 'marketing_admin'), getAllAmbassadors);
+router.patch('/ambassadors/:id/approve', authorizeAdminRoles('super_admin', 'moderator', 'marketing_admin'), approveAmbassador);
+router.patch('/ambassadors/:id/reject', authorizeAdminRoles('super_admin', 'moderator', 'marketing_admin'), rejectAmbassador);
+router.patch('/ambassadors/:id/suspend', authorizeAdminRoles('super_admin', 'moderator', 'marketing_admin'), suspendAmbassador);
+router.get('/ambassadors/referrals', authorizeAdminRoles('super_admin', 'finance_admin', 'moderator', 'support_admin'), getAllReferrals);
+router.get('/ambassadors/:id/timeline', authorizeAdminRoles('super_admin', 'finance_admin', 'moderator', 'support_admin'), getAmbassadorTimeline);
+router.get('/ambassadors/payouts', authorizeAdminRoles('super_admin', 'finance_admin', 'moderator', 'support_admin'), getAllAmbassadorPayouts);
+router.patch('/ambassadors/payouts/:id', authorizeAdminRoles('super_admin', 'finance_admin'), reviewAmbassadorPayout);
+router.get('/ambassadors/settings', authorizeAdminRoles('super_admin', 'finance_admin'), getAmbassadorCommissionSettings);
+router.patch('/ambassadors/settings', authorizeAdminRoles('super_admin', 'finance_admin'), updateAmbassadorCommissionSettings);
+router.get('/ambassadors/finance-overview', authorizeAdminRoles('super_admin', 'finance_admin'), getAmbassadorFinanceOverview);
+router.post('/ambassadors/leaderboard/sync', authorizeAdminRoles('super_admin', 'moderator', 'marketing_admin'), syncLeaderboard);
+router.post('/ambassadors/reset-season', authorizeAdminRoles('super_admin'), resetSeason);
+router.post('/ambassadors/marketing-assets', authorizeAdminRoles('super_admin', 'marketing_admin'), upload.single('file'), uploadMarketingAsset);
+router.get('/ambassadors/marketing-assets/stats', authorizeAdminRoles('super_admin', 'marketing_admin', 'support_admin', 'moderator'), getMarketingAssetsStats);
+router.get('/ambassadors/marketing-assets', authorizeAdminRoles('super_admin', 'marketing_admin', 'support_admin', 'moderator'), getMarketingAssetsAdmin);
+router.put('/ambassadors/marketing-assets/:id', authorizeAdminRoles('super_admin', 'marketing_admin'), upload.single('file'), updateMarketingAsset);
+router.delete('/ambassadors/marketing-assets/:id', authorizeAdminRoles('super_admin', 'marketing_admin'), deleteMarketingAsset);
+router.get('/ambassadors/marketing-assets/:id/downloads', authorizeAdminRoles('super_admin', 'marketing_admin'), getMarketingAssetDownloadLogs);
+
+router.post('/ambassadors/campaigns/target-preview', authorizeAdminRoles('super_admin', 'marketing_admin'), getCampaignTargetPreview);
+router.post('/ambassadors/campaigns', authorizeAdminRoles('super_admin', 'marketing_admin'), createAmbassadorCampaign);
+router.get('/ambassadors/campaigns', authorizeAdminRoles('super_admin', 'marketing_admin', 'support_admin', 'moderator'), getAmbassadorCampaigns);
+router.get('/ambassadors/campaigns/:id', authorizeAdminRoles('super_admin', 'marketing_admin', 'support_admin', 'moderator'), getAmbassadorCampaignDetail);
+router.post('/ambassadors/campaigns/:id/test', authorizeAdminRoles('super_admin', 'marketing_admin'), sendTestCampaignEmail);
+router.delete('/ambassadors/campaigns/:id', authorizeAdminRoles('super_admin', 'marketing_admin'), deleteAmbassadorCampaign);
+router.get('/ambassadors/analytics-overview', authorizeAdminRoles('super_admin', 'marketing_admin', 'finance_admin', 'support_admin', 'moderator'), getAdminReferralAnalytics);
+router.get('/ambassadors/:id/dashboard', authorizeAdminRoles('super_admin', 'marketing_admin', 'support_admin', 'moderator'), impersonateAmbassadorDashboard);
 
 // OPERATIONS
 router.get('/bookings', authorizeAdminRoles('super_admin', 'finance_admin', 'moderator', 'support_admin'), getAllBookings);  

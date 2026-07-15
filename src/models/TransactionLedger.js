@@ -8,7 +8,6 @@ const transactionLedgerSchema = new mongoose.Schema(
       required: true,
       index: true,
     },
-
     type: {
       type: String,
       enum: [
@@ -24,8 +23,12 @@ const transactionLedgerSchema = new mongoose.Schema(
         'tax_reserve',
         'adjustment',
         'failed_transfer',
-        'student_payment', // Keeping for backwards compatibility if needed
-        'platform_fee'      // Keeping for backwards compatibility
+        'student_payment',
+        'platform_fee',
+        'ambassador_commission',
+        'ambassador_payout',
+        'ambassador_commission_expense',
+        'ambassador_payable'
       ],
       required: true,
     },

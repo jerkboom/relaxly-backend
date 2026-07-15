@@ -2,10 +2,17 @@ const mongoose = require('mongoose');
 
 const payoutQueueSchema = new mongoose.Schema(
   {
+    payoutType: {
+      type: String,
+      enum: ['owner', 'ambassador'],
+      default: 'owner',
+      required: true,
+      index: true
+    },
     booking: {
       type: mongoose.Schema.Types.ObjectId,
       ref: 'Booking',
-      required: true,
+      required: function() { return this.payoutType === 'owner'; },
       index: true,
     },
     owner: {
@@ -17,7 +24,7 @@ const payoutQueueSchema = new mongoose.Schema(
     hostel: {
       type: mongoose.Schema.Types.ObjectId,
       ref: 'Hostel',
-      required: true,
+      required: function() { return this.payoutType === 'owner'; },
     },
     transferMethod: {
       type: String,
@@ -31,7 +38,7 @@ const payoutQueueSchema = new mongoose.Schema(
       type: mongoose.Schema.Types.ObjectId,
       ref: 'PayoutMethod',
     },
-        grossAmount: { type: Number },
+    grossAmount: { type: Number },
     platformFee: { type: Number },
     netAmount: { type: Number },
     amount: {
@@ -40,11 +47,13 @@ const payoutQueueSchema = new mongoose.Schema(
     },
     commissionAmount: {
       type: Number,
-      required: [true, 'Commission amount is required'],
+      required: function() { return this.payoutType === 'owner'; },
+      default: 0,
     },
     paystackFee: {
       type: Number,
-      required: [true, 'Paystack fee is required'],
+      required: function() { return this.payoutType === 'owner'; },
+      default: 0,
     },
     finalTransferAmount: {
       type: Number,
@@ -72,6 +81,11 @@ const payoutQueueSchema = new mongoose.Schema(
         'failed',
         'otp_failed',
         'cancelled',
+        'requested',
+        'under_review',
+        'processing_transfer',
+        'held',
+        'rejected',
       ],
       default: 'pending',
       index: true,
@@ -120,6 +134,18 @@ const payoutQueueSchema = new mongoose.Schema(
       type: Number,
       default: 0,
     },
+    notes: {
+      type: String,
+      trim: true
+    },
+    statusLogs: [
+      {
+        status: String,
+        changedAt: { type: Date, default: Date.now },
+        changedBy: String,
+        reason: String
+      }
+    ],
     metadata: {
       type: mongoose.Schema.Types.Mixed,
     },

@@ -11,7 +11,7 @@ const logAdminAction = async ({
   severity = 'low',
   status = 'success',
   metadata = {},
-}) => {
+}, session) => {
   try {
     const actor = getActor(req);
     const isProvisionedAdmin = Boolean(req?.admin || actor?.status);
@@ -29,7 +29,13 @@ const logAdminAction = async ({
       userAgent: req?.headers?.['user-agent'],
     };
 
-    const log = await AdminAuditLog.create(logData);
+    let log;
+    if (session) {
+      const [newLog] = await AdminAuditLog.create([logData], { session });
+      log = newLog;
+    } else {
+      log = await AdminAuditLog.create(logData);
+    }
 
     socketManager.notifyAdmins('audit_event', {
       ...log.toObject(),

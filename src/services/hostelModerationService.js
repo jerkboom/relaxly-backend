@@ -3,6 +3,7 @@ const { logAdminAction } = require('../utils/auditLogger');
 const { APIFeatures } = require('../utils/apiFeatures');
 const cache = require('../utils/cache');
 const { invalidateHostelBrowseCaches } = require('../utils/hostelCache');
+const { runTransactionWithRetry } = require('../utils/transactionHelper');
 
 class HostelModerationService {
   async getPendingHostels(queryObj) {
@@ -36,38 +37,40 @@ class HostelModerationService {
   }
 
   async approveHostel(hostelId, adminReq) {
-    const hostel = await Hostel.findById(hostelId);
-    if (!hostel) {
-      const error = new Error('Hostel not found');
-      error.code = 'NOT_FOUND';
-      throw error;
-    }
+    return await runTransactionWithRetry(async (session) => {
+      const hostel = await Hostel.findById(hostelId).session(session);
+      if (!hostel) {
+        const error = new Error('Hostel not found');
+        error.code = 'NOT_FOUND';
+        throw error;
+      }
 
-    if (hostel.verificationStatus === 'approved') {
-      const error = new Error('Hostel is already approved');
-      error.code = 'BAD_REQUEST';
-      throw error;
-    }
+      if (hostel.verificationStatus === 'approved') {
+        const error = new Error('Hostel is already approved');
+        error.code = 'BAD_REQUEST';
+        throw error;
+      }
 
-    hostel.verificationStatus = 'approved';
-    hostel.isVerified = true;
-    hostel.approvedAt = Date.now();
-    hostel.approvedBy = adminReq.user.id;
+      hostel.verificationStatus = 'approved';
+      hostel.isVerified = true;
+      hostel.approvedAt = Date.now();
+      hostel.approvedBy = adminReq.user.id;
 
-    await hostel.save();
+      await hostel.save({ session });
 
-    invalidateHostelBrowseCaches(hostel);
-    cache.deleteMatching('admin_dashboard_analytics_');
+      invalidateHostelBrowseCaches(hostel);
+      cache.deleteMatching('admin_dashboard_analytics_');
 
-    await logAdminAction({
-      req: adminReq,
-      actionType: 'HOSTEL_APPROVE',
-      targetType: 'Hostel',
-      targetId: hostel._id
+      await logAdminAction({
+        req: adminReq,
+        actionType: 'HOSTEL_APPROVE',
+        targetType: 'Hostel',
+        targetId: hostel._id
+      }, session);
+
+      // TODO: Dispatch notification event
+      return hostel;
     });
-
-    // TODO: Dispatch notification event
-    return hostel;
   }
 
   async rejectHostel(hostelId, notes, adminReq) {
@@ -77,32 +80,34 @@ class HostelModerationService {
       throw error;
     }
 
-    const hostel = await Hostel.findById(hostelId);
-    if (!hostel) {
-      const error = new Error('Hostel not found');
-      error.code = 'NOT_FOUND';
-      throw error;
-    }
+    return await runTransactionWithRetry(async (session) => {
+      const hostel = await Hostel.findById(hostelId).session(session);
+      if (!hostel) {
+        const error = new Error('Hostel not found');
+        error.code = 'NOT_FOUND';
+        throw error;
+      }
 
-    hostel.verificationStatus = 'rejected';
-    hostel.isVerified = false;
-    hostel.rejectionReason = notes;
+      hostel.verificationStatus = 'rejected';
+      hostel.isVerified = false;
+      hostel.rejectionReason = notes;
 
-    await hostel.save();
+      await hostel.save({ session });
 
-    invalidateHostelBrowseCaches(hostel);
-    cache.deleteMatching('admin_dashboard_analytics_');
+      invalidateHostelBrowseCaches(hostel);
+      cache.deleteMatching('admin_dashboard_analytics_');
 
-    await logAdminAction({
-      req: adminReq,
-      actionType: 'HOSTEL_REJECT',
-      targetType: 'Hostel',
-      targetId: hostel._id,
-      metadata: { reason: notes }
+      await logAdminAction({
+        req: adminReq,
+        actionType: 'HOSTEL_REJECT',
+        targetType: 'Hostel',
+        targetId: hostel._id,
+        metadata: { reason: notes }
+      }, session);
+
+      // TODO: Dispatch notification event
+      return hostel;
     });
-
-    // TODO: Dispatch notification event
-    return hostel;
   }
 
   async suspendHostel(hostelId, notes, adminReq) {
@@ -112,32 +117,34 @@ class HostelModerationService {
       throw error;
     }
 
-    const hostel = await Hostel.findById(hostelId);
-    if (!hostel) {
-      const error = new Error('Hostel not found');
-      error.code = 'NOT_FOUND';
-      throw error;
-    }
+    return await runTransactionWithRetry(async (session) => {
+      const hostel = await Hostel.findById(hostelId).session(session);
+      if (!hostel) {
+        const error = new Error('Hostel not found');
+        error.code = 'NOT_FOUND';
+        throw error;
+      }
 
-    hostel.verificationStatus = 'suspended';
-    hostel.available = false;
-    hostel.suspensionReason = notes;
+      hostel.verificationStatus = 'suspended';
+      hostel.available = false;
+      hostel.suspensionReason = notes;
 
-    await hostel.save();
+      await hostel.save({ session });
 
-    invalidateHostelBrowseCaches(hostel);
-    cache.deleteMatching('admin_dashboard_analytics_');
+      invalidateHostelBrowseCaches(hostel);
+      cache.deleteMatching('admin_dashboard_analytics_');
 
-    await logAdminAction({
-      req: adminReq,
-      actionType: 'HOSTEL_SUSPEND',
-      targetType: 'Hostel',
-      targetId: hostel._id,
-      metadata: { reason: notes }
+      await logAdminAction({
+        req: adminReq,
+        actionType: 'HOSTEL_SUSPEND',
+        targetType: 'Hostel',
+        targetId: hostel._id,
+        metadata: { reason: notes }
+      }, session);
+
+      // TODO: Dispatch notification event
+      return hostel;
     });
-
-    // TODO: Dispatch notification event
-    return hostel;
   }
   async getModerationStats() {
     const now = new Date();

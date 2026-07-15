@@ -47,7 +47,7 @@ const adminSchema = new mongoose.Schema({
   // Defines the level of access within the admin dashboard
   role: {
     type: String,
-    enum: ['super_admin', 'finance_admin', 'moderator', 'support_admin'],
+    enum: ['super_admin', 'finance_admin', 'moderator', 'support_admin', 'marketing_admin'],
     default: 'support_admin'
   },
   // Specific permission strings for granular access control

@@ -35,7 +35,17 @@ const notificationSchema = new mongoose.Schema(
       default: 'system',
       index: true,
     },
-
+    severity: {
+      type: String,
+      enum: ['info', 'warning', 'critical'],
+      default: 'info',
+      index: true,
+    },
+    auditId: {
+      type: mongoose.Schema.Types.ObjectId,
+      ref: 'AdminAuditLog',
+      index: true,
+    },
     data: {
       type: mongoose.Schema.Types.Mixed,
       default: {},

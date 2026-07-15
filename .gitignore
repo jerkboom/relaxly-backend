@@ -4,3 +4,34 @@ node_modules
 logs/
 .env.*
 !.env.example
+
+# Build output
+dist/
+build/
+
+# Development scratch directory
+scratch/
+
+# Development / debugging scripts at repo root
+check_*.js
+find_*.js
+scan_*.js
+seed_universities*.js
+inspect_*.js
+reproduce_*.js
+view_*.js
+migrate_*.js
+fix-*.js
+create-comm-*.js
+search_*.js
+debug*.js
+test-*.js
+testAnalytics.js
+testFinance.js
+testCommunication.js
+createAdmin.js
+full-registration-load-test.js
+login-load-test.js
+test.json
+test.txt
+ecosystem.config.js

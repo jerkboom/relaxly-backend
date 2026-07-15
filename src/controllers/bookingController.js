@@ -517,6 +517,24 @@ const cancelBooking =
 
     await booking.save();
 
+    const PayoutQueue = require('../models/PayoutQueue');
+    await PayoutQueue.updateMany(
+      { booking: booking._id, status: { $in: ['pending', 'failed', 'otp_failed'] } },
+      { 
+        $set: { 
+          status: 'cancelled',
+          failureReason: 'Booking cancelled by student'
+        } 
+      }
+    );
+
+    try {
+      const ambassadorService = require('../services/ambassadorService');
+      await ambassadorService.handleBookingCancellation(booking._id, 'Booking cancelled by student');
+    } catch (err) {
+      console.error('Failed to revoke ambassador commission on student cancel:', err.message);
+    }
+
     logLifecycleEvent('booking_cancelled', {
       bookingId: booking._id.toString(),
       roomId: booking.room.toString(),

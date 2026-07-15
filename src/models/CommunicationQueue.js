@@ -52,6 +52,10 @@ const communicationQueueSchema = new mongoose.Schema({
   maxAttempts: { type: Number, default: 3 },
   // Scheduling for the next retry attempt
   nextAttemptAt: { type: Date, default: Date.now },
+  // Retry metadata (exact naming matching production metrics)
+  lastAttempt: { type: Date },
+  nextRetry: { type: Date },
+  failureReason: { type: String },
   // History of errors encountered during delivery
   errorLogs: [{ type: String }],
   // Sorting order for the dispatcher (higher = sooner)

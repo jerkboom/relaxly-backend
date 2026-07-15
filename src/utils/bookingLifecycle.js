@@ -39,23 +39,23 @@ const logLifecycleEvent = (event, data = {}) => {
   );
 };
 
-const syncHostelAvailability = async (hostelId) => {
+const syncHostelAvailability = async (hostelId, session) => {
   const availableRooms = await Room.countDocuments({
     hostel: hostelId,
     availableBeds: { $gt: 0 },
     roomStatus: 'available',
-  });
+  }).session(session);
 
   const hostel = await Hostel.findByIdAndUpdate(
     hostelId,
     { availableRooms },
-    { new: true }
+    { new: true, session }
   ).select('_id nearestUniversity nearbyUniversities');
   invalidateHostelBrowseCaches(hostel);
   return availableRooms;
 };
 
-const restoreRoomBed = async (bookingId, reason = 'restored') => {
+const restoreRoomBed = async (bookingId, reason = 'restored', session) => {
   const booking = await Booking.findOneAndUpdate(
     {
       _id: bookingId,
@@ -66,7 +66,7 @@ const restoreRoomBed = async (bookingId, reason = 'restored') => {
         bedRestored: true,
       },
     },
-    { new: true }
+    { new: true, session }
   );
 
   if (!booking) {
@@ -77,7 +77,7 @@ const restoreRoomBed = async (bookingId, reason = 'restored') => {
     return null;
   }
 
-  const student = await User.findById(booking.student).select('gender');
+  const student = await User.findById(booking.student).select('gender').session(session);
 
   if (!student?.gender) {
     logLifecycleEvent('bed_restoration_skipped_missing_gender', {
@@ -106,15 +106,16 @@ const restoreRoomBed = async (bookingId, reason = 'restored') => {
     {
       new: true,
       runValidators: true,
+      session
     }
   );
 
   if (updatedRoom?.availableBeds > 0 && updatedRoom.roomStatus === 'unavailable') {
     updatedRoom.roomStatus = 'available';
-    await updatedRoom.save();
+    await updatedRoom.save({ session });
   }
 
-  await syncHostelAvailability(booking.hostel);
+  await syncHostelAvailability(booking.hostel, session);
 
   // INVALIDATE CACHE: Critical to prevent "Sold Out" stale data
   cache.delete(`room_meta_${booking.room}`);
@@ -130,7 +131,7 @@ const restoreRoomBed = async (bookingId, reason = 'restored') => {
   return booking;
 };
 
-const expireBookingReservation = async (bookingId, reason = 'reservation_expired') => {
+const expireBookingReservation = async (bookingId, reason = 'reservation_expired', session) => {
   const booking = await Booking.findOneAndUpdate(
     {
       _id: bookingId,
@@ -143,7 +144,7 @@ const expireBookingReservation = async (bookingId, reason = 'reservation_expired
         paymentStatus: 'expired',
       },
     },
-    { new: true }
+    { new: true, session }
   );
 
   if (!booking) {
@@ -158,7 +159,7 @@ const expireBookingReservation = async (bookingId, reason = 'reservation_expired
     reason,
   });
 
-  await restoreRoomBed(booking._id, reason);
+  await restoreRoomBed(booking._id, reason, session);
   return booking;
 };
 

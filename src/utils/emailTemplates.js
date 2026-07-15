@@ -1,10 +1,13 @@
-﻿const escapeHtml = (value) =>
+const escapeHtml = (value) =>
   String(value ?? '')
     .replace(/&/g, '&amp;')
     .replace(/</g, '&lt;')
     .replace(/>/g, '&gt;')
     .replace(/"/g, '&quot;')
     .replace(/'/g, '&#39;');
+
+const { buildAdminUrl } = require('./adminUrl');
+const { FRONTEND_URL } = require('../config/appConfig');
 
 const formatCurrency = (value, currency = 'GHS') => {
   const amount = Number(value) || 0;
@@ -96,7 +99,7 @@ const baseEmailTemplate = ({
 </html>`;
 
 const buildStudentBookingConfirmationEmail = ({ booking, owner }) => {
-  const frontendUrl = (process.env.FRONTEND_URL || 'https://relaxlygh.com').replace(/\/$/, '');
+  const frontendUrl = FRONTEND_URL;
   const hostel = booking.hostel || {};
   const room = booking.room || {};
   const student = booking.student || {};
@@ -140,7 +143,7 @@ const buildStudentBookingConfirmationEmail = ({ booking, owner }) => {
 };
 
 const buildHostBookingNotificationEmail = ({ booking, owner }) => {
-  const adminUrl = (process.env.ADMIN_URL || process.env.FRONTEND_URL || 'https://admin.relaxlygh.com').replace(/\/$/, '');
+  const bookingsUrl = buildAdminUrl('/bookings');
   const hostel = booking.hostel || {};
   const student = booking.student || {};
 
@@ -162,12 +165,14 @@ const buildHostBookingNotificationEmail = ({ booking, owner }) => {
       statusLabel: 'Paid',
       statusColor: '#059669',
       actions: [
-        {
-          href: `${adminUrl}/bookings`,
-          label: 'View Booking',
-          background: '#059669',
-        },
-      ],
+        bookingsUrl
+          ? {
+              href: bookingsUrl,
+              label: 'View Booking',
+              background: '#059669',
+            }
+          : null,
+      ].filter(Boolean),
       footer: 'Relaxly Admin Portal',
     }),
   };

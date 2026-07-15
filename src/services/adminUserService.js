@@ -3,6 +3,7 @@ const Booking = require('../models/Booking');
 const Hostel = require('../models/Hostel');
 const University = require('../models/University');
 const { logAdminAction } = require('../utils/auditLogger');
+const { notifyAdmins } = require('./notificationService');
 
 class AdminUserService {
   /**
@@ -84,6 +85,18 @@ class AdminUserService {
       targetId: user._id,
       metadata: { oldRole, newRole: role }
     });
+
+    if (oldRole !== role) {
+      await notifyAdmins({
+        role: 'super_admin',
+        title: 'User Role Changed',
+        message: `User ${user.email} changed from ${oldRole} to ${role}.`,
+        subject: 'User Role Changed',
+        idempotencyKey: `user_role:${user._id}:${role}`,
+        type: 'system',
+        data: { userId: user._id, oldRole, newRole: role }
+      });
+    }
 
     return user;
   }

@@ -2,6 +2,44 @@ const mongoose = require('mongoose');
 const bcrypt = require('bcryptjs');
 const crypto = require('crypto');
 
+const ambassadorProfileSchema = new mongoose.Schema({
+  university: { type: String },
+  faculty: { type: String },
+  level: { type: String },
+  hallHostel: { type: String },
+  phone: { type: String },
+  whatsapp: { type: String },
+  instagramUsername: { type: String },
+  tiktokUsername: { type: String },
+  groupsManagedCount: { type: Number, default: 0 },
+  estimatedStudentReach: { type: Number, default: 0 },
+  leadershipExperience: { type: String },
+  whyBecomeAmbassador: { type: String },
+  studentIdUrl: { type: String },
+  profilePictureUrl: { type: String },
+  agreedToTerms: { type: Boolean },
+  referralCode: { type: String, unique: true, sparse: true, index: true },
+  referralUrl: { type: String },
+  qrCodeUrl: { type: String },
+  paystackRecipientCode: { type: String },
+  badge: {
+    type: String,
+    enum: ['bronze', 'silver', 'gold', 'diamond', 'legend'],
+    default: 'bronze'
+  },
+  appliedAt: { type: Date, default: Date.now },
+  reviewedAt: Date,
+  reviewedBy: { type: mongoose.Schema.Types.ObjectId, ref: 'User' },
+  rejectionReason: String,
+  suspendedAt: Date,
+  suspensionReason: String,
+  seasonBookings: { type: Number, default: 0 },
+  seasonCommission: { type: Number, default: 0 },
+  seasonRank: { type: Number, default: null },
+  seasonReferralCount: { type: Number, default: 0 },
+  internalNotes: { type: String, default: '' }
+}, { _id: false });
+
 const userSchema = new mongoose.Schema(
     {
       name: {
@@ -104,9 +142,20 @@ const userSchema = new mongoose.Schema(
           'finance_admin',
           'moderator',
           'support_admin',
+          'marketing_admin',
           'admin'
         ],
         default: 'student',
+      },
+      adminNotificationPreferences: {
+        email: {
+          type: Boolean,
+          default: true,
+        },
+        inApp: {
+          type: Boolean,
+          default: true,
+        },
       },
       commissionRate: {
         type: Number,
@@ -175,6 +224,27 @@ const userSchema = new mongoose.Schema(
           bankName: String,
           accountNumber: String,
         },
+      },
+      isAmbassador: {
+        type: Boolean,
+        default: false,
+        index: true
+      },
+      ambassadorStatus: {
+        type: String,
+        enum: ['none', 'pending', 'approved', 'rejected', 'suspended', 'inactive'],
+        default: 'none',
+        index: true,
+      },
+      ambassadorRole: {
+        type: String,
+        enum: ['ambassador', 'campus_leader', 'regional_manager'],
+        default: 'ambassador',
+        index: true,
+      },
+      ambassadorProfile: {
+        type: ambassadorProfileSchema,
+        default: null
       },
       gender: {
         type: String,

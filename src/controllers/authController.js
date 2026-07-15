@@ -96,7 +96,9 @@ const registerUser = asyncHandler(
       agreedToPolicies: true,
       agreedAt: new Date(),
       policyVersion: 'v1.0',
-    }; if (role !== 'owner') {
+    };
+
+    if (role !== 'owner') {
       if (!university || !studentId) {
         res.status(400);
         throw new Error('Students must provide their University and Student ID Number.');
@@ -122,7 +124,34 @@ const registerUser = asyncHandler(
       }
       
       userPayload.studentId = studentId;
-    } let inviteRecord = null;
+
+      // Optional Campus Ambassador Application details
+      if (req.body.applyAsAmbassador === true || req.body.applyAsAmbassador === 'true') {
+        userPayload.isAmbassador = true;
+        userPayload.ambassadorStatus = 'pending';
+        userPayload.ambassadorProfile = {
+          university: req.body.ambassadorUniversity || customUniversity || 'Unspecified',
+          faculty: req.body.ambassadorFaculty || 'General',
+          level: req.body.ambassadorLevel || '100',
+          hallHostel: req.body.ambassadorHallHostel || 'Unspecified',
+          phone: req.body.ambassadorPhone || phone,
+          whatsapp: req.body.ambassadorWhatsapp || phone,
+          instagramUsername: req.body.ambassadorInstagram || '',
+          tiktokUsername: req.body.ambassadorTiktok || '',
+          groupsManagedCount: Number(req.body.ambassadorGroupsCount) || 0,
+          estimatedStudentReach: Number(req.body.ambassadorReach) || 0,
+          leadershipExperience: req.body.ambassadorExperience || '',
+          whyBecomeAmbassador: req.body.ambassadorReason || 'Interested in campus growth',
+          studentIdUrl: req.body.ambassadorStudentIdUrl || 'pending',
+          profilePictureUrl: req.body.ambassadorProfilePicUrl || 'pending',
+          agreedToTerms: req.body.ambassadorAgreed === true || req.body.ambassadorAgreed === 'true',
+          badge: 'bronze',
+          appliedAt: new Date()
+        };
+      }
+    }
+
+    let inviteRecord = null;
 
     if (userPayload.role === 'owner') {
       // SECURITY: Owners MUST have a valid invite code and ID
@@ -160,6 +189,17 @@ const registerUser = asyncHandler(
 
     // 4. EXECUTION: Create user account
     const user = await User.create(userPayload);
+
+    // 4.5. Referral signup tracking
+    const referralCode = req.body.refCode || req.body.referralCode;
+    if (user.role === 'student' && referralCode) {
+      try {
+        const ambassadorService = require('../services/ambassadorService');
+        await ambassadorService.trackReferralSignup(user._id, referralCode);
+      } catch (err) {
+        console.error('Referral signup tracking failed:', err.message);
+      }
+    }
 
     // 5. SECURITY SEAL: Mark invite code as used
     if (inviteRecord) {

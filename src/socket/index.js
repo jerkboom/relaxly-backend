@@ -3,15 +3,16 @@ const socketManager = require("../utils/socketManager");
 
 let io;
 
+const getAllowedOrigins = () => [
+  process.env.FRONTEND_URL,
+  process.env.CLIENT_URL,
+  process.env.ADMIN_URL
+].filter(Boolean);
+
 const initIO = (server) => {
   io = new Server(server, {
     cors: {
-      origin: [
-        "http://localhost:3000",
-        "http://localhost:3001",
-        "http://127.0.0.1:3000",
-        "http://127.0.0.1:3001"
-      ],
+      origin: getAllowedOrigins(),
       credentials: true
     },
     transports: ['websocket', 'polling']

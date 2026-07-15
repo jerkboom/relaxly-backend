@@ -1,4 +1,5 @@
 process.env.UV_THREADPOOL_SIZE = 64;
+require('dotenv').config();
 const express = require('express');
 const mongoose = require('mongoose');
 const cors = require('cors');
@@ -8,8 +9,6 @@ const helmet = require('helmet');
 const mongoSanitize = require('express-mongo-sanitize');
 const rateLimit = require('express-rate-limit');
 const morgan = require('morgan');
-
-require('dotenv').config();
 
 /* =========================================
    DATABASE
@@ -47,6 +46,7 @@ const payoutMethodRoutes = require('./src/routes/payoutMethodRoutes');
 const ownerOperationsRoutes = require('./src/routes/ownerOperationsRoutes');
 const payoutRoutes = require('./src/routes/payoutRoutes');
 const reportRoutes = require('./src/routes/reportRoutes');
+const ambassadorRoutes = require('./src/routes/ambassadorRoutes');
 
 /* =========================================
    MIDDLEWARE
@@ -118,18 +118,21 @@ app.use((req, res, next) => {
    CORS
 ========================================= */
 const allowedOrigins = [
-  'http://localhost:3000',
-  'http://localhost:3001',
-  'http://127.0.0.1:3000',
-  'http://127.0.0.1:3001',
-  'http://172.20.10.4:3000',
-  process.env.FRONTEND_URL, 
-  process.env.ADMIN_URL     
-].filter(Boolean); 
+  process.env.FRONTEND_URL,
+  process.env.ADMIN_URL,
+  ...(process.env.CORS_ORIGINS || '').split(',').map(origin => origin.trim())
+].filter(Boolean);
 
 app.use(
   cors({
-    origin: allowedOrigins,
+    origin: (origin, callback) => {
+      if (!origin) return callback(null, true);
+      if (allowedOrigins.includes(origin)) {
+        callback(null, true);
+      } else {
+        callback(new Error('Not allowed by CORS'));
+      }
+    },
     credentials: true,
   })
 );
@@ -151,7 +154,7 @@ app.use('/api/bookings', bookingLimiter);
 /* =========================================
    LOGGER
 ========================================= */
-app.use(morgan('dev'));
+app.use(morgan(process.env.NODE_ENV === 'production' ? 'combined' : 'dev'));
 
 // Specific stricter limit for admin login
 const adminLoginLimiter = rateLimit({
@@ -210,6 +213,8 @@ app.get('/api/health', async (req, res) => {
   }
 });
 
+app.use('/uploads', express.static(path.join(__dirname, 'public/uploads')));
+
 /* =========================================
    API ROUTES
 ========================================= */
@@ -219,6 +224,8 @@ app.use('/api/admin/owners', ownerOperationsRoutes);
 app.use('/api/admin', adminRoutes);
 app.use('/api/users', userRoutes);
 app.use('/users', userRoutes); // Handle frontend calling without /api prefix
+app.use('/api/platform', require('./src/routes/platformRoutes'));
+app.use('/platform', require('./src/routes/platformRoutes'));
 app.use('/api/universities', universityRoutes);
 app.use('/universities', universityRoutes);
 app.use('/api/hostels', hostelRoutes);
@@ -249,6 +256,8 @@ app.use('/api/finance', financeRoutes);
 app.use('/api/payouts', payoutRoutes);
 app.use('/api/owner/reports', reportRoutes);
 app.use('/payouts', payoutRoutes); // Handle frontend calling without /api prefix
+app.use('/api/ambassadors', ambassadorRoutes);
+app.use('/ambassadors', ambassadorRoutes);
 
 /* =========================================
    ERROR HANDLING (Must be at the very end!)
@@ -267,6 +276,26 @@ app.use(errorHandler);
 const cron = require('node-cron');
 const { cleanupExpiredReservations } = require('./src/utils/bookingLifecycle');
 const { processPendingPayouts } = require('./src/services/payoutService');
+const { notifyAdmins } = require('./src/services/notificationService');
+
+const notifySystemFailure = async ({ workflow, title, error }) => {
+  try {
+    await notifyAdmins({
+      role: 'super_admin',
+      title,
+      message: `Workflow: ${workflow}\nError: ${error.message}`,
+      subject: title,
+      idempotencyKey: `system_failure:${workflow}:${new Date().toISOString().slice(0, 16)}`,
+      type: 'system',
+      data: {
+        workflow,
+        error: error.message
+      }
+    });
+  } catch (notifyErr) {
+    console.error('[SYSTEM_FAILURE_NOTIFICATION_ERROR]', notifyErr.message);
+  }
+};
 
 const PORT = process.env.PORT || 5000;
 server.listen(PORT, '0.0.0.0', () => {
@@ -281,6 +310,11 @@ server.listen(PORT, '0.0.0.0', () => {
         }
       } catch (err) {
         console.error('[CRON ERROR] Booking cleanup failed:', err.message);
+        await notifySystemFailure({
+          workflow: 'booking_cleanup_cron',
+          title: 'Failed Cron Job: Booking Cleanup',
+          error: err
+        });
       }
     });
 
@@ -290,6 +324,49 @@ server.listen(PORT, '0.0.0.0', () => {
         console.log('[CRON] Payout check completed');
       } catch (err) {
         console.error('[CRON ERROR] Payout check failed:', err.message);
+        await notifySystemFailure({
+          workflow: 'payout_check_cron',
+          title: 'Failed Cron Job: Payout Check',
+          error: err
+        });
+      }
+    });
+
+    // Process/Retry queued emails from CommunicationQueue
+    cron.schedule('*/1 * * * *', async () => {
+      try {
+        const { processCommunicationTask } = require('./src/services/notificationService');
+        const CommunicationQueue = require('./src/models/CommunicationQueue');
+        const pendingTasks = await CommunicationQueue.find({
+          status: { $in: ['PENDING', 'FAILED'] },
+          attempts: { $lt: 3 },
+          nextAttemptAt: { $lte: new Date() }
+        }).sort({ priority: -1, createdAt: 1 }).limit(20);
+
+        for (const task of pendingTasks) {
+          try {
+            await processCommunicationTask(task._id);
+          } catch (taskErr) {
+            console.error(`[CRON ERROR] Retrying task ${task._id} failed:`, taskErr.message);
+          }
+        }
+      } catch (err) {
+        console.error('[CRON ERROR] Communication Queue check failed:', err.message);
+      }
+    });
+
+    // Send hourly hostel moderation digest
+    cron.schedule('0 * * * *', async () => {
+      try {
+        const notificationService = require('./src/services/notificationService');
+        await notificationService.sendHostelModerationDigest();
+      } catch (err) {
+        console.error('[CRON ERROR] Hostel moderation digest failed:', err.message);
+        await notifySystemFailure({
+          workflow: 'hostel_moderation_digest_cron',
+          title: 'Failed Cron Job: Hostel Moderation Digest',
+          error: err
+        });
       }
     });
 });
